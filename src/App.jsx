@@ -7,7 +7,52 @@ const STAFF=["Michelle","Alyson","Susan"];
 const SHIFTS={ Michelle:"Morning",Alyson:"Morning",Susan:"Evening" };
 const WDAYS=[1,2,3,4,5,6];
 const DNAMES=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-const AT_BASE="app6DROW7O9mZnmTY",AT_SHIFTS="tbl4sVuVCiDCyXF3O",AT_TOKEN="patppMWHKbx68aeNP.8d37f524addbaf4997c863c9682c7da9932bb0927727dade5272a72157835ea4";
+const AT_BASE="app6DROW7O9mZnmTY",AT_SHIFTS="tbl4sVuVCiDCyXF3O",AT_TASKS="tblTl58cC0siAAaSN",AT_TOKEN="patppMWHKbx68aeNP.8d37f524addbaf4997c863c9682c7da9932bb0927727dade5272a72157835ea4";
+const AT_HDR={Authorization:`Bearer ${AT_TOKEN}`,"Content-Type":"application/json"};
+
+// ── AIRTABLE SCHEDULE HELPERS ──
+// Each row = one staff+day combo. Tasks stored as JSON in the Tasks field.
+async function fetchScheduleFromAirtable(){
+  let rows=[],offset=null;
+  do{
+    const url=new URL(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`);
+    url.searchParams.set("pageSize","100");
+    if(offset)url.searchParams.set("offset",offset);
+    const r=await fetch(url.toString(),{headers:{Authorization:`Bearer ${AT_TOKEN}`}});
+    if(!r.ok)throw new Error("Schedule fetch failed");
+    const d=await r.json();rows=[...rows,...d.records];offset=d.offset||null;
+  }while(offset);
+  // Build schedule object from rows
+  const sched=JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
+  rows.forEach(r=>{
+    const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"];
+    if(staff&&day&&tasks){
+      try{
+        if(!sched[day])sched[day]={};
+        sched[day][staff]=JSON.parse(tasks);
+        // store record id so we can PATCH later
+        if(!sched[day]._ids)sched[day]._ids={};
+        sched[day]._ids[staff]=r.id;
+      }catch{}
+    }
+  });
+  return sched;
+}
+
+async function saveScheduleToAirtable(sched,day,staff,tasks,existingId){
+  const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Last Updated":new Date().toISOString().split("T")[0]};
+  if(existingId){
+    // Update existing row
+    const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})});
+    if(!r.ok)throw new Error("Save failed");
+    return existingId;
+  }else{
+    // Create new row
+    const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})});
+    if(!r.ok)throw new Error("Create failed");
+    const d=await r.json();return d.id;
+  }
+}
 
 const DEFAULT_SCHEDULE={ Monday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking","Fridge Date Check / Temp Check","Pricing"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Pop Stacking","Fridges Clean","Product Date Checks"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns","Spirits Stacking","Mix Ups","Behind Counter Clean"] },Tuesday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Dog Food Stacking","Chocolate/Sweets Stacking","Promotions"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Cigarette/Vape Stacking","Door Clean / Outside Clean"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns","Wine Stacking","Delivery Unload","Stock Room Clean"] },Wednesday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Pop Stacking","Fridge Stacking","Mop"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking","Beers Stacking","Cards Stacking"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns","Spirits Stacking","Mix Ups"] },Thursday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Grocery Stacking","Freezer Stacking"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Chocolate/Sweets Stacking","Product Date Checks"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns","Cigarette/Vape Stacking","Behind Counter Clean"] },Friday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking","Beers Stacking"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Wine Stacking","Cards Stacking"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns","Pop Stacking","Delivery Unload"] },Saturday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Fridge Stacking","Mop"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Dog Food Stacking","Freezer Stacking"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns","Cigarette/Vape Stacking","Spirits Stacking"] },Sunday:{ Michelle:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns"],Alyson:["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns"],Susan:["Post Office","Till Lift / End of Shift Count","Personal Training","Newspaper Returns"] } };
 const TASK_POOL=["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking","Pop Stacking","Beers Stacking","Wine Stacking","Dog Food Stacking","Toiletries Stacking","Fridge Stacking","Freezer Stacking","Grocery Stacking","Biscuit Stacking","Cards Stacking","Chocolate/Sweets Stacking","Mix Ups","Cigarette/Vape Stacking","Spirits Stacking","Fridge Date Check / Temp Check","Product Date Checks","Fridges Clean","Mop","Door Clean / Outside Clean","Behind Counter Clean","Stock Room Clean","Cash and Carry List","Pricing","Promotions","Delivery Unload","Serving"];
@@ -90,21 +135,138 @@ return(<div style={{padding:"12px 16px 90px"}}><Card style={{marginBottom:14}}><
 <Lbl>Session History with Notes</Lbl><Card>{sessions.map((s,i)=>(<div key={i} style={{padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:13,color:T.sub}}>{new Date(s.date).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</span><span style={{fontSize:14,fontWeight:700,color:ta&&s.mins>ta*1.3?T.red:ta&&s.mins<ta*0.7?T.green:T.text}}>{s.mins}m</span></div>{s.notes&&<NoteTag note={s.notes}/>}</div>))}{!sessions.length&&<p style={{color:T.muted,fontSize:14,margin:0}}>No sessions yet.</p>}</Card></div>);}
 
 // ── ACTIONS TAB ──
-function ActionsTab(){const[selStaff,setSelStaff]=useState(null);const[schedule,setSchedule]=useState(null);const[selDay,setSelDay]=useState(DNAMES[new Date().getDay()]||"Mon");const[adding,setAdding]=useState(false);const[newTask,setNewTask]=useState("");const[saved,setSaved]=useState(false);
-const fullDay=d=>ALL_DAYS.find(fd=>fd.startsWith(d))||d;
-const curDayFull=fullDay(selDay);
-useEffect(()=>{if(!selStaff)return;try{const s=localStorage.getItem("stafflog_schedule_v1");setSchedule(s?JSON.parse(s):JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)));}catch{setSchedule(JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)));}},[selStaff]);
-const save=sched=>{localStorage.setItem("stafflog_schedule_v1",JSON.stringify(sched));setSaved(true);setTimeout(()=>setSaved(false),2000);};
-const removeTask=task=>{const u={...schedule,[curDayFull]:{...schedule[curDayFull],[selStaff]:(schedule[curDayFull]?.[selStaff]||[]).filter(t=>t!==task)}};setSchedule(u);save(u);};
-const addTask=t=>{if(!t.trim())return;const existing=schedule?.[curDayFull]?.[selStaff]||[];if(!existing.includes(t)){const u={...schedule,[curDayFull]:{...schedule[curDayFull],[selStaff]:[...existing,t]}};setSchedule(u);save(u);}setNewTask("");setAdding(false);};
-const todayTasks=schedule&&selStaff&&schedule[curDayFull]?schedule[curDayFull][selStaff]||[]:[];
-const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
-if(!selStaff)return(<div style={{padding:"16px 16px 90px"}}><div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:4}}>Actions</div><div style={{fontSize:14,color:T.sub,marginBottom:20}}>Edit each staff member's daily task schedule. Changes save instantly and sync to their app.</div>{STAFF.map(n=>(<Card key={n} style={{marginBottom:10}} onPress={()=>setSelStaff(n)}><div style={{display:"flex",alignItems:"center",gap:12}}><Avatar name={n} size={46}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{n}</div><div style={{fontSize:13,color:T.muted}}>{SHIFTS[n]} shift · Tap to edit schedule</div></div><span style={{fontSize:20,color:T.muted}}>›</span></div></Card>))}<div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:`1px solid #BFDBFE`}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>📋 Sync Note</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6}}>Schedule changes currently save to this device's browser storage. The staff app reads from this same storage when accessed on the same device. For full cross-device sync, a TaskSchedules table in Airtable is needed — this is the next integration step.</div></div></div>);
-return(<div style={{padding:"0 16px 90px"}}><div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}><button onClick={()=>setSelStaff(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:T.text,padding:0,lineHeight:1}}>←</button><Avatar name={selStaff} size={36}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff}'s Schedule</div><div style={{fontSize:12,color:T.muted}}>{SHIFTS[selStaff]} shift</div></div>{saved&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Saved</span>}</div>
-<div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>(<button key={d} onClick={()=>setSelDay(d)} style={{background:selDay===d?SC[selStaff]:"#fff",color:selDay===d?"#fff":T.sub,border:`1px solid ${selDay===d?SC[selStaff]:T.border}`,borderRadius:20,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{d}</button>))}</div>
-<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><Lbl>{curDayFull} Tasks ({todayTasks.length})</Lbl><button onClick={()=>setAdding(true)} style={{background:SC[selStaff],color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add</button></div>
-{adding&&(<Card style={{marginBottom:12,border:`1px solid ${SC[selStaff]}`}}><div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {curDayFull}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{unusedTasks.slice(0,12).map(t=>(<button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>))}</div><div style={{display:"flex",gap:8}}><input value={newTask} onChange={e=>setNewTask(e.target.value)} placeholder="Or type a custom task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/><button onClick={()=>addTask(newTask)} style={{background:SC[selStaff],color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button></div><button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button></Card>)}
-<Card>{todayTasks.length===0&&<p style={{color:T.muted,fontSize:14,margin:0}}>No tasks for {curDayFull}. Tap + Add.</p>}{todayTasks.map((task,i)=>(<div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><div style={{width:10,height:10,borderRadius:"50%",background:SC[selStaff],flexShrink:0}}/><span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span><button onClick={()=>removeTask(task)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>))}</Card></div>);}
+function ActionsTab(){
+  const[selStaff,setSelStaff]=useState(null);
+  const[schedule,setSchedule]=useState(null);
+  const[loading,setLoading]=useState(false);
+  const[saving,setSaving]=useState(false);
+  const[saveStatus,setSaveStatus]=useState(null); // "ok"|"err"|null
+  const[selDay,setSelDay]=useState(ALL_DAYS[new Date().getDay()===0?6:new Date().getDay()-1]);
+  const[adding,setAdding]=useState(false);
+  const[newTask,setNewTask]=useState("");
+
+  // Load schedule from Airtable when staff selected
+  useEffect(()=>{
+    if(!selStaff)return;
+    setLoading(true);
+    fetchScheduleFromAirtable()
+      .then(s=>{setSchedule(s);setLoading(false);})
+      .catch(()=>{
+        // Fallback to default if Airtable fails
+        setSchedule(JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)));
+        setLoading(false);
+      });
+  },[selStaff]);
+
+  const curDayFull=selDay;
+  const todayTasks=schedule&&selStaff&&schedule[curDayFull]?schedule[curDayFull][selStaff]||[]:[];
+  const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
+  const existingId=schedule?.[curDayFull]?._ids?.[selStaff]||null:null;
+
+  const persistChange=async(newTasks)=>{
+    setSaving(true);setSaveStatus(null);
+    try{
+      const newId=await saveScheduleToAirtable(schedule,curDayFull,selStaff,newTasks,existingId);
+      // Update local _ids so next save patches correctly
+      setSchedule(prev=>{
+        const u=JSON.parse(JSON.stringify(prev));
+        if(!u[curDayFull]._ids)u[curDayFull]._ids={};
+        u[curDayFull]._ids[selStaff]=newId;
+        return u;
+      });
+      setSaveStatus("ok");
+    }catch{setSaveStatus("err");}
+    setSaving(false);
+    setTimeout(()=>setSaveStatus(null),2500);
+  };
+
+  const removeTask=task=>{
+    const newTasks=(schedule[curDayFull]?.[selStaff]||[]).filter(t=>t!==task);
+    setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));u[curDayFull][selStaff]=newTasks;return u;});
+    persistChange(newTasks);
+  };
+  const addTask=t=>{
+    if(!t.trim())return;
+    const existing=schedule?.[curDayFull]?.[selStaff]||[];
+    if(existing.includes(t)){setNewTask("");setAdding(false);return;}
+    const newTasks=[...existing,t];
+    setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[curDayFull])u[curDayFull]={};u[curDayFull][selStaff]=newTasks;return u;});
+    persistChange(newTasks);
+    setNewTask("");setAdding(false);
+  };
+
+  if(!selStaff)return(
+    <div style={{padding:"16px 16px 90px"}}>
+      <div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:4}}>Actions</div>
+      <div style={{fontSize:14,color:T.sub,marginBottom:20}}>Edit each staff member's daily task schedule. Changes sync to Airtable instantly — staff see updates next time they open their app.</div>
+      {STAFF.map(n=>(<Card key={n} style={{marginBottom:10}} onPress={()=>setSelStaff(n)}><div style={{display:"flex",alignItems:"center",gap:12}}><Avatar name={n} size={46}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{n}</div><div style={{fontSize:13,color:T.muted}}>{SHIFTS[n]} shift · Tap to edit schedule</div></div><span style={{fontSize:20,color:T.muted}}>›</span></div></Card>))}
+      <div style={{marginTop:20,background:T.greenLight,borderRadius:12,padding:"14px 16px",border:`1px solid #BBF7D0`}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.green,marginBottom:4}}>✅ Airtable Sync Active</div>
+        <div style={{fontSize:13,color:T.green,lineHeight:1.6}}>Schedules are now saved to your TaskSchedules table. The staff app reads from the same table — any changes you make here appear on staff devices immediately.</div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{padding:"0 16px 90px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}>
+        <button onClick={()=>setSelStaff(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:T.text,padding:0,lineHeight:1}}>←</button>
+        <Avatar name={selStaff} size={36}/>
+        <div style={{flex:1}}>
+          <div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff}'s Schedule</div>
+          <div style={{fontSize:12,color:T.muted}}>{SHIFTS[selStaff]} shift</div>
+        </div>
+        {saving&&<span style={{fontSize:12,color:T.muted}}>Saving…</span>}
+        {saveStatus==="ok"&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Synced</span>}
+        {saveStatus==="err"&&<span style={{fontSize:12,color:T.red,fontWeight:700}}>⚠ Save failed</span>}
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
+        {ALL_DAYS.map(d=>{const short=d.slice(0,3);return(<button key={d} onClick={()=>setSelDay(d)} style={{background:selDay===d?SC[selStaff]:"#fff",color:selDay===d?"#fff":T.sub,border:`1px solid ${selDay===d?SC[selStaff]:T.border}`,borderRadius:20,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{short}</button>);})}
+      </div>
+
+      {loading?(
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"24px 0",color:T.muted,fontSize:14}}>
+          <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${T.div}`,borderTop:`2px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/>
+          Loading from Airtable…
+        </div>
+      ):(
+        <>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <Lbl>{curDayFull} Tasks ({todayTasks.length})</Lbl>
+            <button onClick={()=>setAdding(true)} style={{background:SC[selStaff],color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add</button>
+          </div>
+
+          {adding&&(
+            <Card style={{marginBottom:12,border:`1px solid ${SC[selStaff]}`}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {curDayFull}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+                {unusedTasks.slice(0,12).map(t=>(<button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>))}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask(newTask)} placeholder="Or type a custom task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/>
+                <button onClick={()=>addTask(newTask)} style={{background:SC[selStaff],color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button>
+              </div>
+              <button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button>
+            </Card>
+          )}
+
+          <Card>
+            {todayTasks.length===0&&<p style={{color:T.muted,fontSize:14,margin:0}}>No tasks for {curDayFull}. Tap + Add to add some.</p>}
+            {todayTasks.map((task,i)=>(
+              <div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:SC[selStaff],flexShrink:0}}/>
+                <span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span>
+                <button onClick={()=>removeTask(task)} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button>
+              </div>
+            ))}
+          </Card>
+          <p style={{fontSize:12,color:T.muted,marginTop:10,lineHeight:1.6}}>Changes sync to Airtable immediately. Staff see updates on their next app load.</p>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ── ROOT ──
 export default function App(){const[bottomTab,setBottomTab]=useState("home");const[subNav,setSubNav]=useState(null);const[allRecs,setAllRecs]=useState([]);const[loading,setLoading]=useState(true);const[error,setError]=useState(null);const expDays=useMemo(()=>expDaysArr(30),[]);
