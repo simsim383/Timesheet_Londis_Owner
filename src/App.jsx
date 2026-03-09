@@ -621,6 +621,22 @@ function TaskDetail({task,staffName,allRecs}){
   );
 }
 
+function ConfirmModal({message,onConfirm,onCancel}){
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={onCancel}>
+      <div onClick={function(e){e.stopPropagation();}} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 40px",width:"100%",maxWidth:480,margin:"0 auto"}}>
+        <div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/>
+        <div style={{fontSize:17,fontWeight:800,color:T.text,marginBottom:8,textAlign:"center"}}>Remove Task?</div>
+        <div style={{fontSize:14,color:T.sub,textAlign:"center",marginBottom:24,lineHeight:1.6}}>{message}</div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onCancel} style={{flex:1,padding:"14px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:"1px solid "+T.border,cursor:"pointer"}}>Cancel</button>
+          <button onClick={onConfirm} style={{flex:1,padding:"14px",borderRadius:14,background:T.red,color:"#fff",fontSize:15,fontWeight:700,border:"none",cursor:"pointer"}}>Remove</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ActionsTab(){
   const [selStaff,setSelStaff]=useState(null);
   const [schedule,setSchedule]=useState(null);
@@ -630,6 +646,7 @@ function ActionsTab(){
   const [selDay,setSelDay]=useState(ALL_DAYS[new Date().getDay()===0?6:new Date().getDay()-1]);
   const [adding,setAdding]=useState(false);
   const [newTask,setNewTask]=useState("");
+  const [confirmTask,setConfirmTask]=useState(null);
 
   useEffect(function(){
     if(!selStaff) return;
@@ -702,7 +719,7 @@ function ActionsTab(){
   return (
     <div style={{padding:"0 16px 90px"}}>
       <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}>
-        <button onClick={function(){setSelStaff(null);}} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:T.text,padding:0,lineHeight:1}}>←</button>
+        <button onClick={function(){setSelStaff(null);}} style={{background:T.bg,border:"1px solid "+T.border,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>← Back</button>
         <Avatar name={selStaff} size={36}/>
         <div style={{flex:1}}>
           <div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff} Schedule</div>
@@ -744,11 +761,18 @@ function ActionsTab(){
               <div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":"1px solid "+T.div}}>
                 <div style={{width:10,height:10,borderRadius:"50%",background:SC[selStaff],flexShrink:0}}/>
                 <span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span>
-                <button onClick={function(){removeTask(task);}} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button>
+                <button onClick={function(){setConfirmTask(task);}} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button>
               </div>
             );})}
           </Card>
         </>
+      )}
+      {confirmTask && (
+        <ConfirmModal
+          message={"Remove \""+confirmTask+"\" from "+selStaff+"'s "+curDay+" schedule?"}
+          onConfirm={function(){removeTask(confirmTask);setConfirmTask(null);}}
+          onCancel={function(){setConfirmTask(null);}}
+        />
       )}
     </div>
   );
@@ -784,7 +808,7 @@ export default function App(){
       <div style={{background:"#111",position:"sticky",top:0,zIndex:20,boxShadow:"0 2px 16px rgba(0,0,0,0.15)"}}>
         <div style={{padding:"14px 16px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            {isSubPage && <button onClick={goBack} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#fff",padding:"0 6px 0 0",lineHeight:1}}>←</button>}
+            {isSubPage && <button onClick={goBack} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:10,padding:"6px 12px",cursor:"pointer",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:4,marginRight:4}}>← Back</button>}
             <div>
               {!isSubPage?(
                 <>
@@ -819,17 +843,15 @@ export default function App(){
       ):bottomTab==="home"?<HomeTab allRecs={allRecs} expDays={expDays}/>:
         bottomTab==="staff"?<StaffTab allRecs={allRecs} expDays={expDays} onNav={onNav}/>:
         <ActionsTab/>}
-      {!isSubPage && (
-        <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:"1px solid "+T.border,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
-          {[{id:"home",icon:"🏠",label:"Home"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"}].map(function(tab){return(
-            <button key={tab.id} onClick={function(){setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-              <span style={{fontSize:22}}>{tab.icon}</span>
-              <span style={{fontSize:11,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>
-              {bottomTab===tab.id && <div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}
-            </button>
-          );})}
-        </div>
-      )}
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:"1px solid "+T.border,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
+        {[{id:"home",icon:"🏠",label:"Home"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"}].map(function(tab){return(
+          <button key={tab.id} onClick={function(){setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+            <span style={{fontSize:22}}>{tab.icon}</span>
+            <span style={{fontSize:11,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>
+            {bottomTab===tab.id&&!isSubPage && <div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}
+          </button>
+        );})}
+      </div>
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{display:none}"}</style>
     </div>
   );
