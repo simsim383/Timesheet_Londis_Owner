@@ -33,7 +33,7 @@ async function fetchScheduleFromAirtable(){
         // store record id so we can PATCH later
         if(!sched[day]._ids)sched[day]._ids={};
         sched[day]._ids[staff]=r.id;
-      }catch{}
+      }catch(e){}
     }
   });
   return sched;
@@ -163,21 +163,14 @@ function ActionsTab(){
   const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
   const existingId=schedule?.[curDayFull]?._ids?.[selStaff]||null:null;
 
-  const persistChange=async(newTasks)=>{
+  const persistChange=(newTasks)=>{
     setSaving(true);setSaveStatus(null);
-    try{
-      const newId=await saveScheduleToAirtable(schedule,curDayFull,selStaff,newTasks,existingId);
-      // Update local _ids so next save patches correctly
-      setSchedule(prev=>{
-        const u=JSON.parse(JSON.stringify(prev));
-        if(!u[curDayFull]._ids)u[curDayFull]._ids={};
-        u[curDayFull]._ids[selStaff]=newId;
-        return u;
-      });
-      setSaveStatus("ok");
-    }catch{setSaveStatus("err");}
-    setSaving(false);
-    setTimeout(()=>setSaveStatus(null),2500);
+    saveScheduleToAirtable(schedule,curDayFull,selStaff,newTasks,existingId)
+      .then((newId)=>{
+        setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[curDayFull]._ids)u[curDayFull]._ids={};u[curDayFull]._ids[selStaff]=newId;return u;});
+        setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);
+      })
+      .catch(()=>{setSaveStatus("err");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);});
   };
 
   const removeTask=task=>{
