@@ -54,7 +54,9 @@ async function fetchAbsences(shopRecordId){
   try{return JSON.parse(d.fields["Absences"]||"{}");}catch{return{};}
 }
 async function saveAbsences(shopRecordId,absences){
-  await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Absences":JSON.stringify(absences)}})});
+  const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Absences":JSON.stringify(absences)}})});
+  if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Save failed");}
+  return r.json();
 }
 function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Shop ID":shopId,"Last Updated":new Date().toISOString().split("T")[0],"Shift Start":shiftStart||"","Shift End":shiftEnd||""};if(existingId){return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Save failed");return existingId;});}else{return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Create failed");return r.json();}).then(d=>d.id);}}
 async function createShop(data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:{"Shop ID":data.shopId,"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin,"Owner ID":data.ownerId,"Active":true}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
@@ -674,17 +676,20 @@ function ActionsTab({shopConfig,shopId}){
   }
   function removeTask(task){const nt=todayTasks.filter(t=>t!==task);setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);}
   function addTask(t){if(!t.trim())return;if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}const nt=[...todayTasks,t];setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);setNewTask("");setAdding(false);}
+  const [absError,setAbsError]=useState(null);
   const addAbsence=async()=>{
-    if(!absFrom||!selStaff)return;setSavingAbs(true);
+    if(!absFrom||!selStaff)return;setSavingAbs(true);setAbsError(null);
     const endDate=absTo&&absTo>=absFrom?absTo:absFrom;
     const dates=[];let d=new Date(absFrom+"T12:00:00");const end=new Date(endDate+"T12:00:00");
     while(d<=end){dates.push(d.toISOString().split("T")[0]);d.setDate(d.getDate()+1);}
     const existing=(absences[selStaff]||[]).filter(a=>!dates.includes(a.date));
     const newEntries=dates.map(date=>({date,type:"absent",comment:absComment.trim()}));
     const updated={...absences,[selStaff]:[...existing,...newEntries]};
-    try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);setAbsFrom("");setAbsTo("");setAbsComment("");}catch(e){}finally{setSavingAbs(false);};
+    try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);setAbsFrom("");setAbsTo("");setAbsComment("");}
+    catch(e){setAbsError(e.message||"Save failed — check connection");}
+    finally{setSavingAbs(false);};
   };
-  const removeAbsence=async(date)=>{const staffAbs=(absences[selStaff]||[]).filter(a=>a.date!==date);const updated={...absences,[selStaff]:staffAbs};try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);}catch(e){}};
+  const removeAbsence=async(date)=>{const staffAbs=(absences[selStaff]||[]).filter(a=>a.date!==date);const updated={...absences,[selStaff]:staffAbs};try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);}catch(e){setAbsError(e.message||"Remove failed");}};
   const staffAbs=(absences[selStaff]||[]).sort((a,b)=>b.date.localeCompare(a.date));
   const staffIdx=selStaff?shopConfig.staff.findIndex(s=>s.name===selStaff):0;
   const staffColor=SC[staffIdx%SC.length];
@@ -714,6 +719,7 @@ function ActionsTab({shopConfig,shopId}){
         </div>
         {absFrom&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>{absTo&&absTo>absFrom?`${Math.round((new Date(absTo+"T12:00:00")-new Date(absFrom+"T12:00:00"))/(1000*60*60*24))+1} days`:"Single day"}</div>}
         <div style={{marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>Comment <span style={{fontWeight:400,color:T.muted}}>(optional)</span></div><input value={absComment} onChange={e=>setAbsComment(e.target.value)} placeholder="e.g. Doctor's appointment, Holiday, etc." style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+        {absError&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:8}}>{absError}</div>}
         <button onClick={addAbsence} disabled={!absFrom||savingAbs} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"11px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:!absFrom||savingAbs?0.5:1}}>{savingAbs?"Saving…":"+ Log Absence"}</button>
       </Card>
       {groupedAbs.length>0?<><Lbl>Record ({staffAbs.length} days)</Lbl><Card>{groupedAbs.map((g,i)=>{const isSingle=g.from===g.to;return <div key={g.from} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>Absent</span><div style={{flex:1}}>{isSingle?<div style={{fontSize:13,color:T.sub}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>:<><div style={{fontSize:13,fontWeight:700,color:T.text}}>{g.dates.length} days</div><div style={{fontSize:11,color:T.muted}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(g.to+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div></>}{g.comment&&<div style={{fontSize:11,color:T.muted,marginTop:2,fontStyle:"italic"}}>"{g.comment}"</div>}</div><button onClick={()=>g.dates.forEach(d=>removeAbsence(d))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
