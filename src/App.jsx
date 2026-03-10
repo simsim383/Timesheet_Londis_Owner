@@ -441,16 +441,24 @@ function BenchmarksTab({allRecs,allShifts,allShops,shopConfig,currentShopId,owne
         </div>)}
         {!staffBreak.some(s=>s.totalMins>0)&&<p style={{color:T.muted,fontSize:14,margin:0,textAlign:"center",padding:"16px 0"}}>No data for this period yet.</p>}
       </Card>
-      {sharedTasks.length>0&&<><div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,marginTop:14,textTransform:"uppercase",letterSpacing:0.8}}>Task Speed Comparison</div>
-        {sharedTasks.map(({task,avgs})=><Card key={task} style={{marginBottom:8}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>{task}</div>
-          {avgs.map((a,i)=><div key={a.name} style={{display:"flex",alignItems:"center",gap:8,marginBottom:i<avgs.length-1?8:0}}>
-            <Avatar name={a.name} size={24} color={a.color}/>
-            <span style={{fontSize:13,flex:1,color:T.sub}}>{a.name}</span>
-            <span style={{fontSize:14,fontWeight:800,color:i===0?T.green:i===avgs.length-1?T.red:T.text}}>{a.avg}m</span>
-            {i===0&&<span style={{fontSize:10,fontWeight:700,color:T.green,background:T.greenLight,padding:"2px 6px",borderRadius:20}}>Fastest</span>}
-          </div>)}
-        </Card>)}
+      {sharedTasks.length>0&&<>
+        <Lbl>Task Speed Analysis</Lbl>
+        <Card style={{marginBottom:14}}>
+          {sharedTasks.map(({task,avgs},ti)=>{
+            const fastest=avgs[0];const slowest=avgs[avgs.length-1];
+            const diff=slowest&&fastest&&fastest.avg>0?Math.round(((slowest.avg-fastest.avg)/fastest.avg)*100):0;
+            return <div key={task} style={{padding:"12px 0",borderTop:ti===0?"none":`1px solid ${T.div}`}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>{task}</div>
+              <ul style={{margin:0,padding:"0 0 0 18px",listStyle:"disc"}}>
+                <li style={{fontSize:13,color:T.green,marginBottom:3,lineHeight:1.5}}>
+                  {fastest.name} is the fastest at {fastest.avg}m avg{avgs.length>1?` — ${diff}% quicker than ${slowest.name} (${slowest.avg}m)`:""}
+                </li>
+                {avgs.slice(1,-1).map(a=><li key={a.name} style={{fontSize:13,color:T.sub,marginBottom:3,lineHeight:1.5}}>{a.name} averages {a.avg}m</li>)}
+                {avgs.length>1&&<li style={{fontSize:13,color:T.red,lineHeight:1.5}}>{slowest.name} takes longest at {slowest.avg}m — worth a quick conversation if this is consistent</li>}
+              </ul>
+            </div>;
+          })}
+        </Card>
       </>}
 
       {/* ── SECTION 2: YOUR OTHER LOCATIONS ── */}
@@ -475,19 +483,29 @@ function BenchmarksTab({allRecs,allShifts,allShops,shopConfig,currentShopId,owne
           </div>
           {portfolioInsights.map((item,i)=><InsightRow key={i} item={item}/>)}
         </Card>
-        {portfolioTaskComp.length>0&&portfolioTaskComp.map(({task,myAvg,comparisons})=><Card key={task} style={{marginBottom:8}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>{task}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-            <div style={{width:10,height:10,borderRadius:"50%",background:T.accent,flexShrink:0}}/>
-            <span style={{fontSize:13,flex:1,fontWeight:600,color:T.text}}>{shopConfig.shopName} <span style={{fontSize:11,color:T.muted,fontWeight:400}}>(this location)</span></span>
-            <span style={{fontSize:14,fontWeight:800,color:T.accent}}>{myAvg}m</span>
-          </div>
-          {comparisons.map((c,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:i<comparisons.length-1?6:0}}>
-            <div style={{width:10,height:10,borderRadius:"50%",background:T.blue,flexShrink:0}}/>
-            <span style={{fontSize:13,flex:1,color:T.sub}}>{c.shopName}</span>
-            <span style={{fontSize:14,fontWeight:800,color:c.avg<myAvg?T.green:c.avg>myAvg?T.red:T.text}}>{c.avg}m</span>
-          </div>)}
-        </Card>)}
+        {portfolioTaskComp.length>0&&<>
+          <Lbl>Task Comparison Across Locations</Lbl>
+          <Card style={{marginBottom:14}}>
+            {portfolioTaskComp.map(({task,myAvg,comparisons},ti)=>{
+              const allLocs=[{shopName:shopConfig.shopName,avg:myAvg,isMe:true},...comparisons].sort((a,b)=>a.avg-b.avg);
+              const fastest=allLocs[0];const slowest=allLocs[allLocs.length-1];
+              return <div key={task} style={{padding:"12px 0",borderTop:ti===0?"none":`1px solid ${T.div}`}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>{task}</div>
+                <ul style={{margin:0,padding:"0 0 0 18px",listStyle:"disc"}}>
+                  {allLocs.map((loc,i)=>{
+                    const isFastest=i===0;const isSlowest=i===allLocs.length-1&&allLocs.length>1;
+                    return <li key={loc.shopName} style={{fontSize:13,color:isFastest?T.green:isSlowest?T.red:T.sub,marginBottom:3,lineHeight:1.5}}>
+                      {loc.shopName}{loc.isMe?" (this location)":""} — {loc.avg}m avg{isFastest&&allLocs.length>1?" 🏆":""}
+                    </li>;
+                  })}
+                  {allLocs.length>1&&<li style={{fontSize:13,color:T.sub,lineHeight:1.5,marginTop:4}}>
+                    {fastest.shopName} is {Math.round(((slowest.avg-fastest.avg)/fastest.avg)*100)}% faster than {slowest.shopName} on this task
+                  </li>}
+                </ul>
+              </div>;
+            })}
+          </Card>
+        </>}
       </>}
 
       {/* ── SECTION 3: EXTERNAL SECTOR ── */}
