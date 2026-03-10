@@ -57,84 +57,142 @@ function wkMins(recs,name,wk){return recs.filter(r=>r.staff===name&&r.week===wk&
 function bestDayFor(recs,task){const m={};recs.filter(r=>r.task===task&&r.mins>0).forEach(r=>{const d=DNAMES[new Date(r.date).getDay()];if(!m[d])m[d]=[];m[d].push(r.mins);});const s=Object.entries(m).map(e=>({day:e[0],avg:avgArr(e[1]),n:e[1].length})).filter(x=>x.n>=1).sort((a,b)=>a.avg-b.avg);return s[0]||null;}
 function taskDayTrendData(recs,task){const m={};recs.filter(r=>r.task===task&&r.mins>0).forEach(r=>{const d=DNAMES[new Date(r.date).getDay()];if(!m[d])m[d]=[];m[d].push(r.mins);});return DNAMES.slice(1,7).map(d=>({day:d,mins:m[d]?avgArr(m[d]):null,n:m[d]?m[d].length:0}));}
 
-// Anonymous benchmark — uses all shops in sector including own, compares current shop vs rest
-// Privacy: never reveals other shops' names or exact figures, only anonymous averages
-function anonBenchmark(allShifts,allShops,currentShopId,sector,period){
-  // Build sector shopId set from Shops table so we don't rely on Sector field being filled in shifts
-  const sectorShopIds=new Set(allShops.filter(s=>s.sector===sector).map(s=>s.shopId));
-  // All sector records across all time for task averages, filtered by period for totals
-  const allSectorRecs=allShifts.filter(r=>sectorShopIds.has(r.shopId)&&r.mins>0);
-  const periodSectorRecs=filterPeriod(allSectorRecs,period);
-  // Other shops = any sector shop that isn't the current one
-  const otherShopIds=[...sectorShopIds].filter(id=>id!==currentShopId);
-  if(otherShopIds.length<1)return null;
-  const otherAllRecs=allSectorRecs.filter(r=>otherShopIds.includes(r.shopId));
-  const otherPeriodRecs=periodSectorRecs.filter(r=>otherShopIds.includes(r.shopId));
-  // Task averages from ALL time (more data, more stable)
-  const taskGroups={};otherAllRecs.forEach(r=>{if(!taskGroups[r.task])taskGroups[r.task]=[];taskGroups[r.task].push(r.mins);});
-  const taskAvgs={};Object.entries(taskGroups).forEach(([t,v])=>{if(v.length>=2)taskAvgs[t]=avgArr(v);});
-  const submitRates={};otherPeriodRecs.forEach(r=>{if(!submitRates[r.shopId])submitRates[r.shopId]=new Set();submitRates[r.shopId].add(r.date);});
-  const avgSubmitDays=Object.values(submitRates).length?avgArr(Object.values(submitRates).map(s=>s.size)):null;
-  // Task variety — how many distinct tasks per shop vs sector average
-  const otherTaskCounts=otherPeriodRecs.reduce((acc,r)=>{if(!acc[r.shopId])acc[r.shopId]=new Set();acc[r.shopId].add(r.task);return acc;},{});
-  const avgOtherTaskVariety=Object.values(otherTaskCounts).length?avgArr(Object.values(otherTaskCounts).map(s=>s.size)):null;
-  // Overall average task speed across all shared tasks (efficiency index)
-  const myShiftRecs=allShifts.filter(r=>r.shopId===currentShopId&&r.mins>0);
-  const myAllTaskAvgs={};myShiftRecs.forEach(r=>{if(!myAllTaskAvgs[r.task])myAllTaskAvgs[r.task]=[];myAllTaskAvgs[r.task].push(r.mins);});
-  const sharedTaskDiffs=Object.entries(myAllTaskAvgs).map(([task,vals])=>{const sectAvg=taskAvgs[task];if(!sectAvg)return null;return Math.round(((avgArr(vals)-sectAvg)/sectAvg)*100);}).filter(v=>v!==null);
-  const overallSpeedDiff=sharedTaskDiffs.length>=2?Math.round(sharedTaskDiffs.reduce((a,b)=>a+b,0)/sharedTaskDiffs.length):null;
-  return{taskAvgs,avgSubmitDays,avgOtherTaskVariety,overallSpeedDiff,sharedTaskCount:sharedTaskDiffs.length,otherShopCount:otherShopIds.length};
+// ─── BENCHMARK: LAYER 1 — PORTFOLIO (owner's own shops) ─────────────────────
+function portfolioBenchmark(allShifts, allShops, currentShopId, ownedShopIds) {
+  const siblings = ownedShopIds.filter(id => id !== currentShopId);
+  if (!siblings.length) return null;
+  // Build task averages per sibling shop
+  const siblingData = siblings.map(shopId => {
+    const shop = allShops.find(s => s.shopId === shopId);
+    const recs = allShifts.filter(r => r.shopId === shopId && r.mins > 0);
+    const taskAvgs = {};
+    const taskGroups = {};
+    recs.forEach(r => { if (!taskGroups[r.task]) taskGroups[r.task] = []; taskGroups[r.task].push(r.mins); });
+    Object.entries(taskGroups).forEach(([t, v]) => { if (v.length >= 1) taskAvgs[t] = avgArr(v); });
+    const submitDays = new Set(recs.map(r => r.date)).size;
+    const taskVariety = new Set(recs.map(r => r.task)).size;
+    return { shopId, shopName: shop?.shopName || shopId, taskAvgs, submitDays, taskVariety, recCount: recs.length };
+  });
+  // My own averages
+  const myRecs = allShifts.filter(r => r.shopId === currentShopId && r.mins > 0);
+  const myTaskAvgs = {};
+  const myTaskGroups = {};
+  myRecs.forEach(r => { if (!myTaskGroups[r.task]) myTaskGroups[r.task] = []; myTaskGroups[r.task].push(r.mins); });
+  Object.entries(myTaskGroups).forEach(([t, v]) => { myTaskAvgs[t] = avgArr(v); });
+  const mySubmitDays = new Set(allShifts.filter(r => r.shopId === currentShopId).map(r => r.date)).size;
+  const myTaskVariety = new Set(myRecs.map(r => r.task)).size;
+  return { siblingData, myTaskAvgs, mySubmitDays, myTaskVariety };
 }
 
-function genAnonInsights(myRecs,benchmark,shopConfig,period){
-  if(!benchmark||benchmark.otherShopCount<1)return[{type:"info",text:`Not enough sector data yet for benchmarking. As more ${shopConfig.sector} businesses join, anonymous comparisons will appear here.`}];
-  const pts=[];
-  const pLabel={today:"today",week:"this week",month:"this month"}[period];
-  const myTaskAvgs={};myRecs.filter(r=>r.mins>0).forEach(r=>{if(!myTaskAvgs[r.task])myTaskAvgs[r.task]=[];myTaskAvgs[r.task].push(r.mins);});
-
-  // 1. Best and worst individual task vs sector
-  let biggestWin=null,biggestFlag=null;
-  Object.entries(myTaskAvgs).forEach(([task,vals])=>{
-    const myAvg=avgArr(vals);const sectAvg=benchmark.taskAvgs[task];
-    if(!sectAvg)return;
-    const diff=Math.round(((myAvg-sectAvg)/sectAvg)*100);
-    if(diff<-10&&(!biggestWin||diff<biggestWin.diff))biggestWin={task,diff,myAvg,sectAvg};
-    if(diff>10&&(!biggestFlag||diff>biggestFlag.diff))biggestFlag={task,diff,myAvg,sectAvg};
+function genPortfolioInsights(myRecs, portfolio, allShops, currentShopId, period) {
+  if (!portfolio || !portfolio.siblingData.length) return null;
+  const pts = [];
+  const pLabel = {today:"today",week:"this week",month:"this month"}[period];
+  const myPeriodTaskAvgs = {};
+  myRecs.filter(r => r.mins > 0).forEach(r => { if (!myPeriodTaskAvgs[r.task]) myPeriodTaskAvgs[r.task] = []; myPeriodTaskAvgs[r.task].push(r.mins); });
+  // Per-sibling task comparisons
+  portfolio.siblingData.forEach(sib => {
+    if (sib.recCount < 2) return;
+    let wins = [], flags = [];
+    Object.entries(myPeriodTaskAvgs).forEach(([task, vals]) => {
+      const myAvg = avgArr(vals); const sibAvg = sib.taskAvgs[task];
+      if (!sibAvg) return;
+      const diff = Math.round(((myAvg - sibAvg) / sibAvg) * 100);
+      if (diff <= -15) wins.push({ task, diff, myAvg, sibAvg });
+      if (diff >= 15) flags.push({ task, diff, myAvg, sibAvg });
+    });
+    wins.sort((a, b) => a.diff - b.diff);
+    flags.sort((a, b) => b.diff - a.diff);
+    if (wins.length) pts.push({ type: "good", text: `Faster than ${sib.shopName} on "${wins[0].task}" — ${wins[0].myAvg}m here vs ${wins[0].sibAvg}m there (${Math.abs(wins[0].diff)}% quicker).` });
+    if (flags.length) pts.push({ type: "flag", text: `Slower than ${sib.shopName} on "${flags[0].task}" — ${flags[0].myAvg}m here vs ${flags[0].sibAvg}m there. Could ${sib.shopName}'s approach help?` });
   });
-  if(biggestWin)pts.push({type:"good",text:`Your team completes "${biggestWin.task}" ${Math.abs(biggestWin.diff)}% faster than others in your sector — ${biggestWin.myAvg}m vs the ${biggestWin.sectAvg}m sector average.`});
-  if(biggestFlag)pts.push({type:"flag",text:`"${biggestFlag.task}" is taking ${biggestFlag.diff}% longer than the sector average — ${biggestFlag.myAvg}m vs ${biggestFlag.sectAvg}m. Worth investigating.`});
-
-  // 2. Overall efficiency index — average speed across all shared tasks
-  if(benchmark.overallSpeedDiff!==null&&benchmark.sharedTaskCount>=2){
-    const d=benchmark.overallSpeedDiff;
-    if(d<=-10)pts.push({type:"good",text:`Across ${benchmark.sharedTaskCount} shared tasks, your team is completing work ${Math.abs(d)}% faster than the sector average. Strong overall efficiency.`});
-    else if(d>=10)pts.push({type:"warn",text:`Across ${benchmark.sharedTaskCount} shared tasks, your team is averaging ${d}% slower than others in your sector. There may be room to improve task pacing.`});
-    else pts.push({type:"insight",text:`Across ${benchmark.sharedTaskCount} shared tasks, your overall task speed is closely in line with the ${shopConfig.sector} sector average.`});
-  }
-
-  // 3. Task variety — breadth of tasks completed
-  if(benchmark.avgOtherTaskVariety){
-    const myVariety=new Set(myRecs.filter(r=>r.mins>0).map(r=>r.task)).size;
-    const diff=pctChg(myVariety,benchmark.avgOtherTaskVariety);
-    if(diff!==null&&myVariety>0){
-      if(diff>=20)pts.push({type:"good",text:`Your team completed ${myVariety} different tasks ${pLabel} — ${diff}% more variety than the sector average. Well-rounded shift coverage.`});
-      else if(diff<=-20)pts.push({type:"insight",text:`Your team completed ${myVariety} task types ${pLabel}, which is ${Math.abs(diff)}% fewer than the sector average. Consider whether any routine tasks are going unlogged.`});
+  // Overall ranking across owned shops for each shared task
+  const allOwnedIds = [currentShopId, ...portfolio.siblingData.map(s => s.shopId)];
+  const sharedTasks = Object.keys(myPeriodTaskAvgs).filter(t => portfolio.siblingData.some(s => s.taskAvgs[t]));
+  if (sharedTasks.length >= 2) {
+    const myOverallDiffs = sharedTasks.map(task => {
+      const sibAvgs = portfolio.siblingData.map(s => s.taskAvgs[task]).filter(Boolean);
+      if (!sibAvgs.length) return null;
+      const portAvg = avgArr(sibAvgs);
+      const myAvg = avgArr(myPeriodTaskAvgs[task]);
+      return Math.round(((myAvg - portAvg) / portAvg) * 100);
+    }).filter(v => v !== null);
+    if (myOverallDiffs.length >= 2) {
+      const avg = Math.round(myOverallDiffs.reduce((a, b) => a + b, 0) / myOverallDiffs.length);
+      const currentShopName = allShops.find(s => s.shopId === currentShopId)?.shopName || "This shop";
+      if (avg <= -10) pts.push({ type: "good", text: `${currentShopName} is your fastest location overall — ${Math.abs(avg)}% quicker than your other shops on average.` });
+      else if (avg >= 10) pts.push({ type: "warn", text: `${currentShopName} is running ${avg}% slower than your other locations on average. Worth a closer look.` });
+      else pts.push({ type: "insight", text: `${currentShopName} is performing in line with your other locations — consistent across your portfolio.` });
     }
   }
+  if (!pts.length) pts.push({ type: "insight", text: `Not enough shared task data yet to compare across your locations. As staff log more shifts the comparisons will fill in.` });
+  return pts;
+}
 
-  // 4. Submission consistency
-  if(benchmark.avgSubmitDays){
-    const mySubmitDays=new Set(myRecs.map(r=>r.date)).size;
-    if(mySubmitDays>0){
-      const diff=pctChg(mySubmitDays,benchmark.avgSubmitDays);
-      if(diff!==null&&Math.abs(diff)>15){
-        if(diff>0)pts.push({type:"good",text:`Your staff are submitting on more days than the sector average — ${diff}% above. Consistent logging habits.`});
-        else pts.push({type:"warn",text:`Your staff are submitting on ${Math.abs(diff)}% fewer days than the sector average. Some shifts may be going untracked.`});
+// ─── BENCHMARK: LAYER 2 — SECTOR (anonymous external) ────────────────────────
+function sectorBenchmark(allShifts, allShops, currentShopId, ownedShopIds, sector, period) {
+  const sectorShopIds = new Set(allShops.filter(s => s.sector === sector).map(s => s.shopId));
+  // External = sector shops NOT owned by this owner
+  const externalShopIds = [...sectorShopIds].filter(id => !ownedShopIds.includes(id));
+  if (!externalShopIds.length) return null;
+  const allSectorRecs = allShifts.filter(r => sectorShopIds.has(r.shopId) && r.mins > 0);
+  const extAllRecs = allShifts.filter(r => externalShopIds.includes(r.shopId) && r.mins > 0);
+  const extPeriodRecs = filterPeriod(extAllRecs, period);
+  // Task averages from external shops (all time for stability)
+  const taskGroups = {}; extAllRecs.forEach(r => { if (!taskGroups[r.task]) taskGroups[r.task] = []; taskGroups[r.task].push(r.mins); });
+  const taskAvgs = {}; Object.entries(taskGroups).forEach(([t, v]) => { if (v.length >= 2) taskAvgs[t] = avgArr(v); });
+  // Submission consistency
+  const extSubmitRates = {}; extPeriodRecs.forEach(r => { if (!extSubmitRates[r.shopId]) extSubmitRates[r.shopId] = new Set(); extSubmitRates[r.shopId].add(r.date); });
+  const avgExtSubmitDays = Object.values(extSubmitRates).length ? avgArr(Object.values(extSubmitRates).map(s => s.size)) : null;
+  // Task variety
+  const extTaskCounts = extPeriodRecs.reduce((acc, r) => { if (!acc[r.shopId]) acc[r.shopId] = new Set(); acc[r.shopId].add(r.task); return acc; }, {});
+  const avgExtTaskVariety = Object.values(extTaskCounts).length ? avgArr(Object.values(extTaskCounts).map(s => s.size)) : null;
+  // Overall speed index vs external
+  const myRecs = allShifts.filter(r => r.shopId === currentShopId && r.mins > 0);
+  const myTaskAvgs = {}; const myTaskGroups = {};
+  myRecs.forEach(r => { if (!myTaskGroups[r.task]) myTaskGroups[r.task] = []; myTaskGroups[r.task].push(r.mins); });
+  Object.entries(myTaskGroups).forEach(([t, v]) => { myTaskAvgs[t] = avgArr(v); });
+  const sharedDiffs = Object.entries(myTaskAvgs).map(([task, vals]) => { const ext = taskAvgs[task]; if (!ext) return null; return Math.round(((avgArr(vals) - ext) / ext) * 100); }).filter(v => v !== null);
+  const overallSpeedDiff = sharedDiffs.length >= 2 ? Math.round(sharedDiffs.reduce((a, b) => a + b, 0) / sharedDiffs.length) : null;
+  return { taskAvgs, avgExtSubmitDays, avgExtTaskVariety, overallSpeedDiff, sharedTaskCount: sharedDiffs.length, externalShopCount: externalShopIds.length, myTaskAvgs };
+}
+
+function genSectorInsights(myRecs, sectorBench, shopConfig, period) {
+  if (!sectorBench || sectorBench.externalShopCount < 1) return [{ type: "info", text: `No external ${shopConfig.sector} businesses in the platform yet. Sector comparisons will appear once other businesses join.` }];
+  const pts = [];
+  const pLabel = {today:"today",week:"this week",month:"this month"}[period];
+  const myTaskAvgs = {};
+  myRecs.filter(r => r.mins > 0).forEach(r => { if (!myTaskAvgs[r.task]) myTaskAvgs[r.task] = []; myTaskAvgs[r.task].push(r.mins); });
+  // Best and worst task vs external sector
+  let biggestWin = null, biggestFlag = null;
+  Object.entries(myTaskAvgs).forEach(([task, vals]) => {
+    const myAvg = avgArr(vals); const extAvg = sectorBench.taskAvgs[task];
+    if (!extAvg) return;
+    const diff = Math.round(((myAvg - extAvg) / extAvg) * 100);
+    if (diff < -10 && (!biggestWin || diff < biggestWin.diff)) biggestWin = { task, diff, myAvg, extAvg };
+    if (diff > 10 && (!biggestFlag || diff > biggestFlag.diff)) biggestFlag = { task, diff, myAvg, extAvg };
+  });
+  if (biggestWin) pts.push({ type: "good", text: `Your team completes "${biggestWin.task}" ${Math.abs(biggestWin.diff)}% faster than other ${shopConfig.sector} businesses — ${biggestWin.myAvg}m vs the ${biggestWin.extAvg}m market average.` });
+  if (biggestFlag) pts.push({ type: "flag", text: `"${biggestFlag.task}" takes ${biggestFlag.diff}% longer than the ${shopConfig.sector} market average — ${biggestFlag.myAvg}m vs ${biggestFlag.extAvg}m.` });
+  // Overall speed vs sector
+  if (sectorBench.overallSpeedDiff !== null && sectorBench.sharedTaskCount >= 2) {
+    const d = sectorBench.overallSpeedDiff;
+    if (d <= -10) pts.push({ type: "good", text: `Across ${sectorBench.sharedTaskCount} tasks, your team is ${Math.abs(d)}% faster than the ${shopConfig.sector} market average. A genuine competitive edge.` });
+    else if (d >= 10) pts.push({ type: "warn", text: `Across ${sectorBench.sharedTaskCount} tasks, your team is ${d}% slower than the ${shopConfig.sector} market average.` });
+    else pts.push({ type: "insight", text: `Across ${sectorBench.sharedTaskCount} tasks, your speed is in line with the broader ${shopConfig.sector} market.` });
+  }
+  // Submission consistency vs sector
+  if (sectorBench.avgExtSubmitDays) {
+    const myDays = new Set(myRecs.map(r => r.date)).size;
+    if (myDays > 0) {
+      const diff = pctChg(myDays, sectorBench.avgExtSubmitDays);
+      if (diff !== null && Math.abs(diff) > 15) {
+        if (diff > 0) pts.push({ type: "good", text: `Your staff log shifts on more days than other ${shopConfig.sector} businesses — ${diff}% above market average.` });
+        else pts.push({ type: "warn", text: `Your staff are logging on ${Math.abs(diff)}% fewer days than the ${shopConfig.sector} average. Some shifts may be going untracked.` });
       }
     }
   }
-
-  if(!pts.length)pts.push({type:"insight",text:`Your ${shopConfig.sector} performance is tracking closely with the sector average. Keep collecting data for deeper insights.`});
+  if (!pts.length) pts.push({ type: "insight", text: `Your performance is closely in line with the ${shopConfig.sector} market. Keep collecting data for deeper insights.` });
   return pts;
 }
 
@@ -186,15 +244,17 @@ function PeriodToggle({period,setPeriod}){return <div style={{display:"flex",gap
 
 function ShopSwitcher({shops,currentShopId,onSelect,onClose}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 48px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:16}}>Your Businesses</div>{shops.map((shop,i)=><button key={shop.shopId} onClick={()=>{onSelect(shop.shopId);onClose();}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:shop.shopId===currentShopId?"#111":T.bg,borderRadius:14,border:`1px solid ${shop.shopId===currentShopId?"#111":T.border}`,cursor:"pointer",marginBottom:8,textAlign:"left"}}><span style={{fontSize:26}}>{SECTOR_ICONS[shop.sector]||"🏢"}</span><div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:shop.shopId===currentShopId?"#fff":T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:shop.shopId===currentShopId?"rgba(255,255,255,0.5)":T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div></div>{shop.shopId===currentShopId&&<span style={{color:"#fff"}}>✓</span>}</button>)}</div></div>;}
 
-function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,expDays,dataLoading}){
+function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,ownedShopIds,expDays,dataLoading}){
   const [period,setPeriod]=useState("today");
   const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
   const prevRecs=useMemo(()=>filterPrev(allRecs,period),[allRecs,period]);
   const staffNames=shopConfig.staff.map(s=>s.name);
   const sdm=useMemo(()=>staffDatesMap(allRecs,staffNames),[allRecs]);
   const summary=useMemo(()=>genSummary(recs,period,staffNames),[recs,period]);
-  const benchmark=useMemo(()=>anonBenchmark(allShifts,allShops,currentShopId,shopConfig.sector,period),[allShifts,allShops,currentShopId,shopConfig.sector,period]);
-  const anonInsights=useMemo(()=>genAnonInsights(recs,benchmark,shopConfig,period),[recs,benchmark,period]);
+  const portfolio=useMemo(()=>portfolioBenchmark(allShifts,allShops,currentShopId,ownedShopIds),[allShifts,allShops,currentShopId,ownedShopIds]);
+  const portfolioInsights=useMemo(()=>genPortfolioInsights(recs,portfolio,allShops,currentShopId,period),[recs,portfolio,period]);
+  const sectBench=useMemo(()=>sectorBenchmark(allShifts,allShops,currentShopId,ownedShopIds,shopConfig.sector,period),[allShifts,allShops,currentShopId,ownedShopIds,shopConfig.sector,period]);
+  const sectorInsights=useMemo(()=>genSectorInsights(recs,sectBench,shopConfig,period),[recs,sectBench,period]);
   const today=todayStr();
   const totalMins=recs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);
   const prevMins=prevRecs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);
@@ -237,10 +297,29 @@ function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,expDays,da
       </Card></>}
       <Lbl>Intelligence · {pLabel}</Lbl>
       <Card style={{marginBottom:14}}>{summary.map((item,i)=><InsightRow key={i} item={item}/>)}</Card>
+      {portfolioInsights&&ownedShopIds.length>1&&<>
+        <Lbl>Your Portfolio · {ownedShopIds.length} Locations</Lbl>
+        <Card style={{marginBottom:14,border:`1px solid #BFDBFE`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <span style={{fontSize:20}}>🏢</span>
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:T.blue}}>Compared against your other locations</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:1}}>Names shown — these are your own businesses</div>
+            </div>
+          </div>
+          {portfolioInsights.map((item,i)=><InsightRow key={i} item={item}/>)}
+        </Card>
+      </>}
       <Lbl>Sector Benchmark · Anonymous</Lbl>
       <Card style={{marginBottom:14,border:`1px solid ${T.purpleLight}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}><span style={{fontSize:20}}>🔒</span><div style={{fontSize:12,color:T.purple,fontWeight:600}}>Anonymous — no other business can see your data</div></div>
-        {anonInsights.map((item,i)=><InsightRow key={i} item={item}/>)}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+          <span style={{fontSize:20}}>🔒</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:T.purple}}>Compared against other {shopConfig.sector} businesses</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>Fully anonymous — no names, no identifiable data</div>
+          </div>
+        </div>
+        {sectorInsights.map((item,i)=><InsightRow key={i} item={item}/>)}
       </Card>
     </div>
   </div>;
@@ -447,7 +526,7 @@ export default function App(){
     </div>
     {!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
     :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
-    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} expDays={expDays} dataLoading={dataLoading}/>
+    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>
     :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>
     :bottomTab==="actions"?<ActionsTab shopConfig={currentShop} shopId={currentShopId}/>
     :<ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>}
