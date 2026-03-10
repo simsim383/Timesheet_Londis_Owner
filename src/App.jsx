@@ -32,7 +32,7 @@ async function fetchAllShops(){const rows=await atFetchAll(AT_SHOPS,`{Active}=1`
 function parseRec(r){return{id:r.id,staff:r.fields["Staff Name"]||"",date:r.fields["Date"]||"",task:r.fields["Task Name"]||"",category:r.fields["Category"]||"",mins:Number(r.fields["Total Minutes"]||0),notes:r.fields["Task Notes"]||"",incident:r.fields["Shift Incident"]||"",week:Number(r.fields["Week Number"]||0),shopId:r.fields["Shop ID"]||"",shopName:r.fields["Store"]||"",sector:r.fields["Sector"]||""};}
 async function fetchShiftsForShop(shopId){const rows=await atFetchAll(AT_SHIFTS,`{Shop ID}="${shopId}"`);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
 async function fetchAllShifts(){const rows=await atFetchAll(AT_SHIFTS);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
-async function fetchSchedule(shopId,sector){const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;const rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);const sched=JSON.parse(JSON.stringify(defaults));rows.forEach(r=>{const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"];if(staff&&day&&tasks){try{if(!sched[day])sched[day]={};sched[day][staff]=JSON.parse(tasks);if(!sched[day]._ids)sched[day]._ids={};sched[day]._ids[staff]=r.id;}catch(e){}}});return sched;}
+async function fetchSchedule(shopId,sector){const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;const rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);const sched=JSON.parse(JSON.stringify(defaults));rows.forEach(r=>{const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"],shiftStart=r.fields["Shift Start"]||"",shiftEnd=r.fields["Shift End"]||"";if(staff&&day&&tasks){try{if(!sched[day])sched[day]={};sched[day][staff]=JSON.parse(tasks);if(!sched[day]._ids)sched[day]._ids={};sched[day]._ids[staff]=r.id;if(!sched[day]._times)sched[day]._times={};if(shiftStart||shiftEnd)sched[day]._times[staff]={start:shiftStart,end:shiftEnd};}catch(e){}}});return sched;}
 
 // ─── PERFORMANCE NOTES (stored in Shops table as JSON in Staff field extension) ─
 // We store notes as a separate key in Airtable Shops: "Staff Notes" (Long text, JSON)
@@ -56,7 +56,7 @@ async function fetchAbsences(shopRecordId){
 async function saveAbsences(shopRecordId,absences){
   await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Absences":JSON.stringify(absences)}})});
 }
-function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId){const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Shop ID":shopId,"Last Updated":new Date().toISOString().split("T")[0]};if(existingId){return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Save failed");return existingId;});}else{return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Create failed");return r.json();}).then(d=>d.id);}}
+function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Shop ID":shopId,"Last Updated":new Date().toISOString().split("T")[0],"Shift Start":shiftStart||"","Shift End":shiftEnd||""};if(existingId){return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Save failed");return existingId;});}else{return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Create failed");return r.json();}).then(d=>d.id);}}
 async function createShop(data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:{"Shop ID":data.shopId,"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin,"Owner ID":data.ownerId,"Active":true}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
 async function updateShop(recordId,data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
 async function deleteShop(recordId){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Active":false}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
@@ -342,13 +342,7 @@ function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,ownedShopI
       {notIn.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(220,38,38,0.2)",borderRadius:10,padding:"8px 12px",marginTop:8}}><span style={{fontSize:14}}>🚨</span><span style={{fontSize:13,color:"#FCA5A5",fontWeight:600}}>Not submitted: {notIn.join(", ")}</span></div>}
     </Card>
     <div style={{padding:"14px 16px 0"}}>
-      <Lbl>Staff Hours · {pLabel}</Lbl>
-      {staffBreak.map(s=><div key={s.name} style={{background:T.card,borderRadius:14,border:`1px solid ${T.border}`,padding:14,marginBottom:8,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><Avatar name={s.name} size={36} color={s.color}/><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{s.name}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:s.color}}>{fmt(s.mins)||"—"}</div><Chip p={pctChg(s.mins,s.prevMins)}/></div></div>
-        <PBar val={s.mins} max={maxMins} color={s.color} h={7}/>
-      </div>)}
-      {chartData.some(d=>d.Current>0||d.Previous>0)&&<><Lbl>{pLabel} vs {prLabel}</Lbl><Card style={{marginBottom:14,padding:"16px 8px 8px"}}><ResponsiveContainer width="100%" height={180}><BarChart data={chartData} margin={{left:0,right:8,top:4,bottom:8}}><CartesianGrid strokeDasharray="3 3" stroke={T.div}/><XAxis dataKey="name" tick={{fontSize:12,fill:T.sub,fontWeight:700}}/><YAxis tick={{fontSize:11,fill:T.muted}} width={24}/><Tooltip formatter={v=>[v+"h"]} contentStyle={{borderRadius:12,border:`1px solid ${T.border}`,fontSize:13}}/><Bar dataKey="Current" radius={[6,6,0,0]}>{chartData.map((s,i)=><Cell key={i} fill={SC[i%SC.length]}/>)}</Bar><Bar dataKey="Previous" fill="#E5E7EB" radius={[6,6,0,0]}/></BarChart></ResponsiveContainer></Card></>}
-      {catData.length>0&&<><Lbl>Time by Category</Lbl><Card style={{marginBottom:14}}>{catData.map(e=>{const p=Math.round((e[1]/catTotal)*100);return<div key={e[0]} style={{marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:13,fontWeight:600,color:T.sub}}>{e[0]}</span><span style={{fontSize:13,fontWeight:700}}>{fmt(e[1])} <span style={{color:T.muted,fontWeight:400}}>({p}%)</span></span></div><PBar val={p} max={100} color={T.accent} h={7}/></div>;})}
+      {catData.length>0&&<><Lbl>Time by Category · {pLabel}</Lbl><Card style={{marginBottom:14}}>{catData.map(e=>{const p=Math.round((e[1]/catTotal)*100);return<div key={e[0]} style={{marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:13,fontWeight:600,color:T.sub}}>{e[0]}</span><span style={{fontSize:13,fontWeight:700}}>{fmt(e[1])} <span style={{color:T.muted,fontWeight:400}}>({p}%)</span></span></div><PBar val={p} max={100} color={T.accent} h={7}/></div>;})}
       </Card></>}
       <Lbl>Intelligence · {pLabel}</Lbl>
       <Card style={{marginBottom:14}}>{summary.map((item,i)=><InsightRow key={i} item={item}/>)}</Card>
@@ -367,33 +361,147 @@ function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,ownedShopI
           </div>)}
         </Card>
       </>}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,marginTop:4}}>
-        <Lbl>Payroll Export</Lbl>
-      </div>
+      <Lbl>Payroll Export</Lbl>
       <Card style={{marginBottom:14}}>
         <div style={{fontSize:13,color:T.sub,marginBottom:12}}>Download a CSV of all staff hours for {pLabel.toLowerCase()}. Import directly into your payroll or accounting software.</div>
         <button onClick={()=>exportPayrollCSV(recs,shopConfig,period)} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"12px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%"}}>⬇ Download {pLabel} Payroll CSV</button>
       </Card>
-      {portfolioInsights&&ownedShopIds.length>1&&<>
-        <Lbl>Your Portfolio · {ownedShopIds.length} Locations</Lbl>
-        <Card style={{marginBottom:14,border:`1px solid #BFDBFE`}}>
+    </div>
+  </div>;
+}
+
+function BenchmarksTab({allRecs,allShifts,allShops,shopConfig,currentShopId,ownedShopIds}){
+  const [period,setPeriod]=useState("week");
+  const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
+  const pLabel={today:"Today",week:"This Week",month:"This Month"}[period];
+  const staffNames=shopConfig.staff.map(s=>s.name);
+
+  // ── Section 1: Within-business staff comparison ──────────────────────────
+  const staffBreak=useMemo(()=>shopConfig.staff.map((s,i)=>{
+    const sRecs=recs.filter(r=>r.staff===s.name&&r.mins>0);
+    const totalMins=sRecs.reduce((a,r)=>a+r.mins,0);
+    const taskCount=[...new Set(sRecs.map(r=>r.task))].length;
+    const avgTask=sRecs.length?avgArr(sRecs.map(r=>r.mins)):0;
+    const taskMap={};sRecs.forEach(r=>{if(!taskMap[r.task])taskMap[r.task]=[];taskMap[r.task].push(r.mins);});
+    return{name:s.name,color:SC[i%SC.length],shift:s.shift,totalMins,taskCount,avgTask,taskMap};
+  }),[recs,shopConfig]);
+  const maxMins=Math.max(...staffBreak.map(s=>s.totalMins),1);
+  // Task-level staff comparison: find tasks done by 2+ staff
+  const sharedTasks=useMemo(()=>{
+    const taskStaff={};recs.filter(r=>r.mins>0).forEach(r=>{if(!taskStaff[r.task])taskStaff[r.task]={};if(!taskStaff[r.task][r.staff])taskStaff[r.task][r.staff]=[];taskStaff[r.task][r.staff][taskStaff[r.task][r.staff].length]=r.mins;});
+    return Object.entries(taskStaff).filter(e=>Object.keys(e[1]).length>=2).map(([task,byStaff])=>{
+      const avgs=Object.entries(byStaff).map(([n,vals])=>({name:n,avg:avgArr(vals),color:SC[shopConfig.staff.findIndex(s=>s.name===n)%SC.length]})).sort((a,b)=>a.avg-b.avg);
+      return{task,avgs};
+    }).sort((a,b)=>b.avgs.length-a.avgs.length).slice(0,8);
+  },[recs,shopConfig]);
+
+  // ── Section 2: Portfolio (owner's other locations, same sector) ──────────
+  const portfolio=useMemo(()=>portfolioBenchmark(allShifts,allShops,currentShopId,ownedShopIds),[allShifts,allShops,currentShopId,ownedShopIds]);
+  const portfolioInsights=useMemo(()=>genPortfolioInsights(recs,portfolio,allShops,currentShopId,period),[recs,portfolio,period]);
+  const sameSecShops=useMemo(()=>allShops.filter(s=>ownedShopIds.includes(s.shopId)&&s.shopId!==currentShopId&&s.sector===shopConfig.sector),[allShops,ownedShopIds,currentShopId,shopConfig.sector]);
+  const portfolioTaskComp=useMemo(()=>{
+    if(!sameSecShops.length)return[];
+    const allPoolRecs=allShifts.filter(r=>ownedShopIds.includes(r.shopId)&&r.mins>0);
+    const myAvgs={};recs.filter(r=>r.mins>0).forEach(r=>{if(!myAvgs[r.task])myAvgs[r.task]=[];myAvgs[r.task].push(r.mins);});
+    return Object.entries(myAvgs).map(([task,vals])=>{
+      const myAvg=avgArr(vals);
+      const comparisons=sameSecShops.map(sh=>{
+        const theirVals=allPoolRecs.filter(r=>r.shopId===sh.shopId&&r.task===task).map(r=>r.mins);
+        return theirVals.length?{shopName:sh.shopName,avg:avgArr(theirVals)}:null;
+      }).filter(Boolean);
+      return comparisons.length?{task,myAvg,comparisons}:null;
+    }).filter(Boolean).sort((a,b)=>b.comparisons.length-a.comparisons.length).slice(0,6);
+  },[recs,allShifts,sameSecShops,ownedShopIds]);
+
+  // ── Section 3: External sector benchmark ─────────────────────────────────
+  const sectBench=useMemo(()=>sectorBenchmark(allShifts,allShops,currentShopId,ownedShopIds,shopConfig.sector,period),[allShifts,allShops,currentShopId,ownedShopIds,shopConfig.sector,period]);
+  const sectorInsights=useMemo(()=>genSectorInsights(recs,sectBench,shopConfig,period),[recs,sectBench,period]);
+  const externalShopCount=useMemo(()=>new Set(allShifts.filter(r=>!ownedShopIds.includes(r.shopId)&&r.sector===shopConfig.sector).map(r=>r.shopId)).size,[allShifts,ownedShopIds,shopConfig.sector]);
+
+  return <div style={{paddingBottom:90}}>
+    <PeriodToggle period={period} setPeriod={setPeriod}/>
+    <div style={{padding:"14px 16px 0"}}>
+
+      {/* ── SECTION 1: YOUR TEAM ── */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+        <div style={{width:4,height:20,background:T.accent,borderRadius:99}}/>
+        <div style={{fontSize:16,fontWeight:800,color:T.text}}>Your Team</div>
+        <div style={{fontSize:12,color:T.muted,marginLeft:2}}>· {shopConfig.shopName}</div>
+      </div>
+      <Card style={{marginBottom:10}}>
+        <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Hours logged {pLabel.toLowerCase()} — ranked</div>
+        {[...staffBreak].sort((a,b)=>b.totalMins-a.totalMins).map((s,i)=><div key={s.name} style={{marginBottom:i<staffBreak.length-1?14:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:i===0?"#F59E0B":i===1?"#9CA3AF":i===2?"#CD7C3F":"#F3F4F6",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:i<3?"#fff":T.muted,flexShrink:0}}>{i+1}</div>
+            <Avatar name={s.name} size={32} color={s.color}/>
+            <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:T.text}}>{s.name}</div><div style={{fontSize:11,color:T.muted}}>{s.taskCount} tasks · avg {s.avgTask}m each</div></div>
+            <div style={{fontSize:16,fontWeight:800,color:s.color}}>{fmt(s.totalMins)||"—"}</div>
+          </div>
+          <PBar val={s.totalMins} max={maxMins} color={s.color} h={6}/>
+        </div>)}
+        {!staffBreak.some(s=>s.totalMins>0)&&<p style={{color:T.muted,fontSize:14,margin:0,textAlign:"center",padding:"16px 0"}}>No data for this period yet.</p>}
+      </Card>
+      {sharedTasks.length>0&&<><div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,marginTop:14,textTransform:"uppercase",letterSpacing:0.8}}>Task Speed Comparison</div>
+        {sharedTasks.map(({task,avgs})=><Card key={task} style={{marginBottom:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>{task}</div>
+          {avgs.map((a,i)=><div key={a.name} style={{display:"flex",alignItems:"center",gap:8,marginBottom:i<avgs.length-1?8:0}}>
+            <Avatar name={a.name} size={24} color={a.color}/>
+            <span style={{fontSize:13,flex:1,color:T.sub}}>{a.name}</span>
+            <span style={{fontSize:14,fontWeight:800,color:i===0?T.green:i===avgs.length-1?T.red:T.text}}>{a.avg}m</span>
+            {i===0&&<span style={{fontSize:10,fontWeight:700,color:T.green,background:T.greenLight,padding:"2px 6px",borderRadius:20}}>Fastest</span>}
+          </div>)}
+        </Card>)}
+      </>}
+
+      {/* ── SECTION 2: YOUR OTHER LOCATIONS ── */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,marginTop:20}}>
+        <div style={{width:4,height:20,background:T.blue,borderRadius:99}}/>
+        <div style={{fontSize:16,fontWeight:800,color:T.text}}>Your Other Locations</div>
+      </div>
+      {sameSecShops.length===0?<Card style={{marginBottom:14,border:`1px solid ${T.border}`}}>
+        <div style={{textAlign:"center",padding:"16px 0"}}>
+          <div style={{fontSize:24,marginBottom:8}}>🏢</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>No other {shopConfig.sector} locations</div>
+          <div style={{fontSize:13,color:T.muted}}>Add more businesses in the same sector to compare performance across your portfolio.</div>
+        </div>
+      </Card>:<>
+        <Card style={{marginBottom:10,border:`1px solid #BFDBFE`}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
             <span style={{fontSize:20}}>🏢</span>
             <div>
-              <div style={{fontSize:13,fontWeight:700,color:T.blue}}>Compared against your other locations</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.blue}}>Compared against your other {shopConfig.sector} locations</div>
               <div style={{fontSize:11,color:T.muted,marginTop:1}}>Names shown — these are your own businesses</div>
             </div>
           </div>
           {portfolioInsights.map((item,i)=><InsightRow key={i} item={item}/>)}
         </Card>
+        {portfolioTaskComp.length>0&&portfolioTaskComp.map(({task,myAvg,comparisons})=><Card key={task} style={{marginBottom:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>{task}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{width:10,height:10,borderRadius:"50%",background:T.accent,flexShrink:0}}/>
+            <span style={{fontSize:13,flex:1,fontWeight:600,color:T.text}}>{shopConfig.shopName} <span style={{fontSize:11,color:T.muted,fontWeight:400}}>(this location)</span></span>
+            <span style={{fontSize:14,fontWeight:800,color:T.accent}}>{myAvg}m</span>
+          </div>
+          {comparisons.map((c,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:i<comparisons.length-1?6:0}}>
+            <div style={{width:10,height:10,borderRadius:"50%",background:T.blue,flexShrink:0}}/>
+            <span style={{fontSize:13,flex:1,color:T.sub}}>{c.shopName}</span>
+            <span style={{fontSize:14,fontWeight:800,color:c.avg<myAvg?T.green:c.avg>myAvg?T.red:T.text}}>{c.avg}m</span>
+          </div>)}
+        </Card>)}
       </>}
-      <Lbl>Sector Benchmark · Anonymous</Lbl>
+
+      {/* ── SECTION 3: EXTERNAL SECTOR ── */}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,marginTop:20}}>
+        <div style={{width:4,height:20,background:T.purple,borderRadius:99}}/>
+        <div style={{fontSize:16,fontWeight:800,color:T.text}}>External {shopConfig.sector.charAt(0).toUpperCase()+shopConfig.sector.slice(1)} Benchmark</div>
+        {externalShopCount>0&&<div style={{fontSize:11,fontWeight:700,color:T.purple,background:T.purpleLight,padding:"2px 8px",borderRadius:20}}>{externalShopCount} {externalShopCount===1?"business":"businesses"}</div>}
+      </div>
       <Card style={{marginBottom:14,border:`1px solid ${T.purpleLight}`}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
           <span style={{fontSize:20}}>🔒</span>
           <div>
-            <div style={{fontSize:13,fontWeight:700,color:T.purple}}>Compared against other {shopConfig.sector} businesses</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:1}}>Fully anonymous — no names, no identifiable data</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.purple}}>Anonymous comparison · other {shopConfig.sector} businesses</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>No names, no identifiable data — your data excluded from others' views too</div>
           </div>
         </div>
         {sectorInsights.map((item,i)=><InsightRow key={i} item={item}/>)}
@@ -512,47 +620,88 @@ function TaskDetail({task,staffName,allRecs,shopConfig}){
 function ActionsTab({shopConfig,shopId}){
   const [selStaff,setSelStaff]=useState(null);const [schedule,setSchedule]=useState(null);const [loadingS,setLoadingS]=useState(false);const [saving,setSaving]=useState(false);const [saveStatus,setSaveStatus]=useState(null);const [selDay,setSelDay]=useState(ALL_DAYS[new Date().getDay()===0?6:new Date().getDay()-1]);const [adding,setAdding]=useState(false);const [newTask,setNewTask]=useState("");const [confirmTask,setConfirmTask]=useState(null);
   const [activeSection,setActiveSection]=useState("schedule"); // "schedule" | "absences"
-  const [absences,setAbsences]=useState({});const [absDate,setAbsDate]=useState("");const [absType,setAbsType]=useState("absent");const [savingAbs,setSavingAbs]=useState(false);
+  const [absences,setAbsences]=useState({});const [absFrom,setAbsFrom]=useState("");const [absTo,setAbsTo]=useState("");const [absType,setAbsType]=useState("holiday");const [savingAbs,setSavingAbs]=useState(false);
+  const [shiftStart,setShiftStart]=useState("");const [shiftEnd,setShiftEnd]=useState("");
   // Reset everything when the active shop changes
   useEffect(()=>{setSelStaff(null);setSchedule(null);setSaveStatus(null);setAdding(false);setNewTask("");setActiveSection("schedule");},[shopId]);
   // Load absences when shop loads
   useEffect(()=>{if(shopConfig?.id)fetchAbsences(shopConfig.id).then(setAbsences).catch(()=>{});},[shopConfig?.id]);
   // Fetch schedule when a staff member is selected for the current shop
   useEffect(()=>{if(!selStaff||!shopId)return;setLoadingS(true);setSchedule(null);fetchSchedule(shopId,shopConfig.sector).then(s=>{setSchedule(s);setLoadingS(false);}).catch(()=>{setSchedule(JSON.parse(JSON.stringify(SECTOR_DEFAULTS[shopConfig.sector]||SECTOR_DEFAULTS.convenience)));setLoadingS(false);});},[selStaff,shopId]);
+  // Load current times when day or staff changes
+  useEffect(()=>{if(!schedule||!selStaff)return;const t=schedule[selDay]?._times?.[selStaff];setShiftStart(t?.start||"");setShiftEnd(t?.end||"");},[schedule,selDay,selStaff]);
   // Staff-specific tasks first, then sector default for the day, then empty
   const todayTasks=schedule&&selStaff&&schedule[selDay]?(schedule[selDay][selStaff]!==undefined?schedule[selDay][selStaff]:schedule[selDay]._all||[]):[];
   const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
   const existingId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
-  function persistChange(newTasks){setSaving(true);setSaveStatus(null);saveScheduleToAirtable(schedule,shopId,selDay,selStaff,newTasks,existingId).then(newId=>{setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay]._ids)u[selDay]._ids={};u[selDay]._ids[selStaff]=newId;return u;});setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);}).catch(()=>{setSaveStatus("err");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);});}
+  function persistChange(newTasks,start,end){const s=start!==undefined?start:shiftStart;const e=end!==undefined?end:shiftEnd;setSaving(true);setSaveStatus(null);saveScheduleToAirtable(schedule,shopId,selDay,selStaff,newTasks,existingId,s,e).then(newId=>{setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay]._ids)u[selDay]._ids={};u[selDay]._ids[selStaff]=newId;if(!u[selDay]._times)u[selDay]._times={};if(s||e)u[selDay]._times[selStaff]={start:s,end:e};return u;});setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);}).catch(()=>{setSaveStatus("err");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);});}
   function removeTask(task){const nt=todayTasks.filter(t=>t!==task);setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);}
   function addTask(t){if(!t.trim())return;if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}const nt=[...todayTasks,t];setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);setNewTask("");setAdding(false);}
-  const addAbsence=async()=>{if(!absDate||!selStaff)return;setSavingAbs(true);const entry={date:absDate,type:absType};const staffAbs=[...(absences[selStaff]||[]).filter(a=>a.date!==absDate),entry];const updated={...absences,[selStaff]:staffAbs};try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);setAbsDate("");}catch(e){}finally{setSavingAbs(false);}};
+  const addAbsence=async()=>{
+    if(!absFrom||!selStaff)return;setSavingAbs(true);
+    const endDate=absTo&&absTo>=absFrom?absTo:absFrom;
+    const dates=[];let d=new Date(absFrom+"T12:00:00");const end=new Date(endDate+"T12:00:00");
+    while(d<=end){dates.push(d.toISOString().split("T")[0]);d.setDate(d.getDate()+1);}
+    const existing=(absences[selStaff]||[]).filter(a=>!dates.includes(a.date));
+    const newEntries=dates.map(date=>({date,type:absType}));
+    const updated={...absences,[selStaff]:[...existing,...newEntries]};
+    try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);setAbsFrom("");setAbsTo("");}catch(e){}finally{setSavingAbs(false);};
+  };
   const removeAbsence=async(date)=>{const staffAbs=(absences[selStaff]||[]).filter(a=>a.date!==date);const updated={...absences,[selStaff]:staffAbs};try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);}catch(e){}};
   const staffAbs=(absences[selStaff]||[]).sort((a,b)=>b.date.localeCompare(a.date));
   const staffIdx=selStaff?shopConfig.staff.findIndex(s=>s.name===selStaff):0;
   const staffColor=SC[staffIdx%SC.length];
   const absTypeColors={absent:{bg:T.redLight,col:T.red,label:"Absent"},holiday:{bg:"#EFF6FF",col:T.blue,label:"Holiday"},sick:{bg:"#FFF7ED",col:T.amber,label:"Sick"},late:{bg:"#F5F3FF",col:T.purple,label:"Late"}};
+  // Group consecutive same-type absence ranges for display
+  const groupedAbs=useMemo(()=>{
+    if(!staffAbs.length)return[];
+    const sorted=[...staffAbs].sort((a,b)=>a.date.localeCompare(b.date));
+    const groups=[];let g=null;
+    sorted.forEach(a=>{
+      if(g&&g.type===a.type){const prev=new Date(g.to+"T12:00:00");prev.setDate(prev.getDate()+1);if(prev.toISOString().split("T")[0]===a.date){g.to=a.date;g.dates.push(a.date);return;}}
+      g={type:a.type,from:a.date,to:a.date,dates:[a.date]};groups.push(g);
+    });
+    return groups.sort((a,b)=>b.from.localeCompare(a.from));
+  },[staffAbs]);
   if(!selStaff)return <div style={{padding:"16px 16px 90px"}}><div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:4}}>Actions</div><div style={{fontSize:14,color:T.sub,marginBottom:20}}>Edit schedules and track absences for each staff member.</div>{shopConfig.staff.map((s,i)=>{const absCount=(absences[s.name]||[]).filter(a=>{const d=new Date(a.date);const now=new Date();const diff=(now-d)/(1000*60*60*24);return diff<=30;}).length;return <Card key={s.name} style={{marginBottom:10}} onPress={()=>setSelStaff(s.name)}><div style={{display:"flex",alignItems:"center",gap:12}}><Avatar name={s.name} size={46} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{s.name}</div><div style={{fontSize:13,color:T.muted}}>{s.shift} shift · Tap to edit</div></div>{absCount>0&&<span style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:700,padding:"3px 8px",borderRadius:20}}>{absCount} abs</span>}<span style={{fontSize:20,color:T.muted}}>›</span></div></Card>;})}
     </div>;
   return <div style={{padding:"0 16px 90px"}}>
     <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}><button onClick={()=>setSelStaff(null)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><Avatar name={selStaff} size={36} color={staffColor}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff}</div><div style={{fontSize:12,color:T.muted}}>{shopConfig.staff.find(s=>s.name===selStaff)?.shift} shift</div></div>{saving&&<span style={{fontSize:12,color:T.muted}}>Saving…</span>}{saveStatus==="ok"&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Synced</span>}{saveStatus==="err"&&<span style={{fontSize:12,color:T.red,fontWeight:700}}>⚠ Failed</span>}</div>
-    <div style={{display:"flex",gap:8,marginBottom:16}}><button onClick={()=>setActiveSection("schedule")} style={{flex:1,background:activeSection==="schedule"?staffColor:T.bg,color:activeSection==="schedule"?"#fff":T.sub,border:`1px solid ${activeSection==="schedule"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋 Schedule</button><button onClick={()=>setActiveSection("absences")} style={{flex:1,background:activeSection==="absences"?staffColor:T.bg,color:activeSection==="absences"?"#fff":T.sub,border:`1px solid ${activeSection==="absences"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📅 Absences {staffAbs.length>0&&`(${staffAbs.length})`}</button></div>
+    <div style={{display:"flex",gap:8,marginBottom:16}}><button onClick={()=>setActiveSection("schedule")} style={{flex:1,background:activeSection==="schedule"?staffColor:T.bg,color:activeSection==="schedule"?"#fff":T.sub,border:`1px solid ${activeSection==="schedule"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋 Schedule</button><button onClick={()=>setActiveSection("absences")} style={{flex:1,background:activeSection==="absences"?staffColor:T.bg,color:activeSection==="absences"?"#fff":T.sub,border:`1px solid ${activeSection==="absences"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📅 Absences {staffAbs.length>0&&`(${groupedAbs.length})`}</button></div>
     {activeSection==="absences"&&<>
-      <Lbl>Log Absence or Holiday</Lbl>
+      <Lbl>Log Period</Lbl>
       <Card style={{marginBottom:14}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-          <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>Date</div><input type="date" value={absDate} onChange={e=>setAbsDate(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
-          <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>Type</div><select value={absType} onChange={e=>setAbsType(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}><option value="absent">Absent</option><option value="holiday">Holiday</option><option value="sick">Sick</option><option value="late">Late</option></select></div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>Type</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+            {Object.entries(absTypeColors).map(([k,v])=><button key={k} onClick={()=>setAbsType(k)} style={{background:absType===k?v.col:T.bg,color:absType===k?"#fff":v.col,border:`1.5px solid ${v.col}`,borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+            <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>From</div><input type="date" value={absFrom} onChange={e=>setAbsFrom(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+            <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>To <span style={{fontWeight:400,color:T.muted}}>(optional)</span></div><input type="date" value={absTo} min={absFrom} onChange={e=>setAbsTo(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+          </div>
+          {absFrom&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>
+            {absTo&&absTo>absFrom?`${Math.round((new Date(absTo+"T12:00:00")-new Date(absFrom+"T12:00:00"))/(1000*60*60*24))+1} days`:"Single day"}
+          </div>}
         </div>
-        <button onClick={addAbsence} disabled={!absDate||savingAbs} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"11px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:!absDate||savingAbs?0.5:1}}>{savingAbs?"Saving…":"+ Log"}</button>
+        <button onClick={addAbsence} disabled={!absFrom||savingAbs} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"11px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:!absFrom||savingAbs?0.5:1}}>{savingAbs?"Saving…":"+ Log Period"}</button>
       </Card>
-      {staffAbs.length>0?<><Lbl>Record</Lbl><Card>{staffAbs.map((a,i)=>{const tc=absTypeColors[a.type]||absTypeColors.absent;return <div key={a.date} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:tc.bg,color:tc.col,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>{tc.label}</span><span style={{flex:1,fontSize:14,color:T.sub}}>{new Date(a.date).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</span><button onClick={()=>removeAbsence(a.date)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
+      {groupedAbs.length>0?<><Lbl>Record ({staffAbs.length} days)</Lbl><Card>{groupedAbs.map((g,i)=>{const tc=absTypeColors[g.type]||absTypeColors.absent;const isSingle=g.from===g.to;return <div key={g.from+g.type} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:tc.bg,color:tc.col,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>{tc.label}</span><div style={{flex:1}}>{isSingle?<div style={{fontSize:13,color:T.sub}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>:<><div style={{fontSize:13,fontWeight:700,color:T.text}}>{g.dates.length} days</div><div style={{fontSize:11,color:T.muted}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(g.to+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div></>}</div><button onClick={()=>g.dates.forEach(d=>removeAbsence(d))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
       </Card></>:<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"24px 0"}}>No absences logged for {selStaff}.</p>}
     </>}
     {activeSection==="schedule"&&<>
     <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>{ALL_DAYS.map(d=><button key={d} onClick={()=>setSelDay(d)} style={{background:selDay===d?staffColor:"#fff",color:selDay===d?"#fff":T.sub,border:`1px solid ${selDay===d?staffColor:T.border}`,borderRadius:20,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{d.slice(0,3)}</button>)}</div>
     {loadingS?<div style={{display:"flex",alignItems:"center",gap:10,padding:"24px 0",color:T.muted,fontSize:14}}><div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${T.div}`,borderTop:`2px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/>Loading schedule…</div>:<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><Lbl>{selDay} Tasks ({todayTasks.length})</Lbl><button onClick={()=>setAdding(true)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add</button></div>
+      <Card style={{marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:8}}>🕐 Shift Times · {selDay}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <div><div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>Start</div><input type="time" value={shiftStart} onChange={e=>setShiftStart(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+          <div><div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>End</div><input type="time" value={shiftEnd} onChange={e=>setShiftEnd(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+        </div>
+        <button onClick={()=>persistChange(todayTasks,shiftStart,shiftEnd)} disabled={saving} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,color:T.sub,cursor:"pointer",opacity:saving?0.5:1}}>Save Times</button>
+        {shiftStart&&shiftEnd&&<span style={{fontSize:12,color:T.muted,marginLeft:10}}>Shows to staff as {shiftStart} – {shiftEnd}</span>}
+      </Card>
       {adding&&<Card style={{marginBottom:12,border:`1px solid ${T.accent}`}}><div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {selDay}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{unusedTasks.slice(0,12).map(t=><button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>)}</div><div style={{display:"flex",gap:8}}><input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask(newTask);}} placeholder="Or type a custom task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/><button onClick={()=>addTask(newTask)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button></div><button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button></Card>}
       <Card>{todayTasks.length===0&&<p style={{color:T.muted,fontSize:14,margin:0}}>No tasks for {selDay}. Tap + Add.</p>}{todayTasks.map((task,i)=><div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><div style={{width:10,height:10,borderRadius:"50%",background:T.accent,flexShrink:0}}/><span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span><button onClick={()=>setConfirmTask(task)} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button></div>)}</Card>
     </>}
@@ -649,11 +798,12 @@ export default function App(){
     {!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
     :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
     :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>
+    :bottomTab==="benchmarks"?<BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>
     :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>
     :bottomTab==="actions"?<ActionsTab shopConfig={currentShop} shopId={currentShopId}/>
     :<ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>}
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:`1px solid ${T.border}`,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
-      {[{id:"home",icon:"🏠",label:"Home"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"},{id:"manage",icon:"⚙️",label:"Businesses"}].map(tab=><button key={tab.id} onClick={()=>{setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><span style={{fontSize:20}}>{tab.icon}</span><span style={{fontSize:10,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>{bottomTab===tab.id&&!isSubPage&&<div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}</button>)}
+      {[{id:"home",icon:"🏠",label:"Home"},{id:"benchmarks",icon:"📊",label:"Benchmarks"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"},{id:"manage",icon:"⚙️",label:"Businesses"}].map(tab=><button key={tab.id} onClick={()=>{setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><span style={{fontSize:20}}>{tab.icon}</span><span style={{fontSize:10,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>{bottomTab===tab.id&&!isSubPage&&<div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}</button>)}
     </div>
     {showSwitcher&&<ShopSwitcher shops={shops} currentShopId={currentShopId} onSelect={id=>{setCurrentShopId(id);setSubNav(null);setShowSwitcher(false);}} onClose={()=>setShowSwitcher(false)}/>}
     <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{display:none}"}</style>
