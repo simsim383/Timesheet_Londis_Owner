@@ -640,8 +640,9 @@ function StaffTab({allRecs,expDays,onNav,shopConfig,onShopConfigUpdated}){
   </div></div>;
 }
 
-function StaffDetail({name,allRecs,expDays,onNav,shopConfig}){
+function StaffDetail({name,allRecs,expDays,onNav,shopConfig,onBack,onRemoveStaff}){
   const [tab,setTab]=useState("overview");const [period,setPeriod]=useState("week");
+  const [confirmRemove,setConfirmRemove]=useState(false);const [removing,setRemoving]=useState(false);
   const staffIdx=shopConfig.staff.findIndex(s=>s.name===name);const color=SC[staffIdx%SC.length];
   const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
   const prevRecs=useMemo(()=>filterPrev(allRecs,period),[allRecs,period]);
@@ -656,6 +657,7 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig}){
   const deleteNote=async(idx)=>{const arr=[...(notes[name]||[])];arr.splice(arr.length-1-idx,1);const updated={...notes,[name]:arr};try{await saveStaffNotes(shopConfig.id,updated);setNotes(updated);}catch(e){}};
   const staffMember=shopConfig.staff.find(s=>s.name===name);
   const hourlyRate=staffMember?.hourlyRate||12.21;
+  const curr=sRecs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);
   const todayMins=allRecs.filter(r=>r.staff===name&&r.date===today&&r.mins>0).reduce((a,r)=>a+r.mins,0);
   const weekStart=new Date();weekStart.setDate(weekStart.getDate()-weekStart.getDay()+1);weekStart.setHours(0,0,0,0);
   const weekMinsVal=allRecs.filter(r=>r.staff===name&&r.mins>0&&new Date(r.date)>=weekStart).reduce((a,r)=>a+r.mins,0);
@@ -676,7 +678,11 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig}){
   const staffShift=shopConfig.staff.find(s=>s.name===name)?.shift||"";
   return <div style={{paddingBottom:90}}><PeriodToggle period={period} setPeriod={setPeriod}/><div style={{padding:"12px 16px 0"}}>
     <Card style={{marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}><Avatar name={name} size={52} color={color}/><div style={{flex:1}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>{name}</div><div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}><Badge label={staffShift} type="neutral"/>{sub?<Badge label="✓ Today" type="good"/>:<Badge label="Not submitted today" type="flag"/>}</div></div></div>
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
+        <Avatar name={name} size={52} color={color}/>
+        <div style={{flex:1}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>{name}</div><div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}><Badge label={staffShift} type="neutral"/>{sub?<Badge label="✓ Today" type="good"/>:<Badge label="Not submitted today" type="flag"/>}</div></div>
+        <button onClick={()=>setConfirmRemove(true)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:10,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>Remove</button>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{[{l:"PERIOD HRS",v:fmt(curr)||"—",s:<Chip p={pctChg(curr,prev)}/>,col:color},{l:"AVG SHIFT",v:fmt(avgShift)||"—",s:"all time",col:color},{l:"CONSISTENCY",v:sc!==null?sc+"/100":"—",s:"reliability",col:sc>70?T.green:sc>40?T.amber:T.red}].map(k=><div key={k.l} style={{background:T.bg,borderRadius:12,padding:"10px 8px"}}><div style={{fontSize:10,fontWeight:700,color:T.muted,marginBottom:4}}>{k.l}</div><div style={{fontSize:16,fontWeight:800,color:k.col}}>{k.v}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{k.s}</div></div>)}</div>
     </Card>
     <div style={{display:"flex",gap:6,marginBottom:14,overflowX:"auto",paddingBottom:2}}>{["overview","tasks","heatmap","trends","notes"].map(t=><button key={t} onClick={()=>setTab(t)} style={{background:tab===t?color:T.card,color:tab===t?"#fff":T.sub,border:`1px solid ${tab===t?color:T.border}`,borderRadius:20,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>)}</div>
@@ -717,7 +723,9 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig}){
         <div style={{fontSize:14,color:T.text,lineHeight:1.6}}>{n.text}</div>
       </Card>):<div style={{textAlign:"center",padding:"32px 0",color:T.muted,fontSize:14}}>No notes yet. Add your first note above.</div>}
     </>}
-  </div></div>;
+  </div></div>
+  {confirmRemove&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>!removing&&setConfirmRemove(false)}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{width:56,height:56,borderRadius:"50%",background:T.redLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 14px"}}>👤</div><div style={{fontSize:18,fontWeight:800,color:T.text,textAlign:"center",marginBottom:8}}>Remove {name}?</div><div style={{fontSize:14,color:T.sub,textAlign:"center",lineHeight:1.7,marginBottom:6}}>This will remove {name} from the staff list and they will no longer be able to log in.</div><div style={{fontSize:13,color:T.muted,textAlign:"center",marginBottom:24}}>Historical shift data will be retained.</div><div style={{display:"flex",gap:10}}><button onClick={()=>setConfirmRemove(false)} disabled={removing} style={{flex:1,padding:"14px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:`1px solid ${T.border}`,cursor:"pointer"}}>Cancel</button><button disabled={removing} onClick={async()=>{setRemoving(true);try{const updated=shopConfig.staff.filter(s=>s.name!==name);await updateShop(shopConfig.id,{...shopConfig,staff:updated});if(onRemoveStaff)onRemoveStaff();}catch(e){setConfirmRemove(false);}finally{setRemoving(false);}}} style={{flex:1,padding:"14px",borderRadius:14,background:T.red,color:"#fff",fontSize:15,fontWeight:700,border:"none",cursor:"pointer"}}>{removing?"Removing…":"Remove"}</button></div></div></div>}
+  </div>;
 }
 
 function TaskDetail({task,staffName,allRecs,shopConfig}){
@@ -956,7 +964,7 @@ export default function App(){
       </div>
     </div>
     {!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
-    :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
+    :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onBack={()=>setSubNav(null)} onRemoveStaff={async()=>{await loadShops();setSubNav(null);}}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
     :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>
     :bottomTab==="benchmarks"?<BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>
     :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops();}}/>
