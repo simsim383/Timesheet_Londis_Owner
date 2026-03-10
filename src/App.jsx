@@ -577,13 +577,52 @@ function BenchmarksTab({allRecs,allShifts,allShops,shopConfig,currentShopId,owne
   </div>;
 }
 
-function StaffTab({allRecs,expDays,onNav,shopConfig}){
+function StaffTab({allRecs,expDays,onNav,shopConfig,onShopConfigUpdated}){
   const [period,setPeriod]=useState("week");
+  const [addingStaff,setAddingStaff]=useState(false);
+  const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");
+  const [savingNew,setSavingNew]=useState(false);const [addErr,setAddErr]=useState(null);
   const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
   const prevRecs=useMemo(()=>filterPrev(allRecs,period),[allRecs,period]);
   const sdm=useMemo(()=>staffDatesMap(allRecs,shopConfig.staff.map(s=>s.name)),[allRecs]);
   const today=todayStr();const isWorkDay=WDAYS.includes(new Date().getDay());
+
+  const handleAddStaff=async()=>{
+    if(!nName.trim()){setAddErr("Enter a name");return;}
+    if(nPin.length!==4||!/^\d{4}$/.test(nPin)){setAddErr("PIN must be 4 digits");return;}
+    if(shopConfig.staff.find(s=>s.pin===nPin)){setAddErr("That PIN is already in use");return;}
+    setSavingNew(true);setAddErr(null);
+    const newStaff={name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift,hourlyRate:parseFloat(nRate)||12.21};
+    const updated=[...shopConfig.staff,newStaff];
+    try{
+      await updateShop(shopConfig.id,{...shopConfig,staff:updated});
+      await onShopConfigUpdated();
+      setNName("");setNPin("");setNShift("morning");setNRate("12.21");setAddingStaff(false);
+    }catch(e){setAddErr(e.message||"Save failed");}
+    finally{setSavingNew(false);}
+  };
+
   return <div style={{paddingBottom:90}}><PeriodToggle period={period} setPeriod={setPeriod}/><div style={{padding:"14px 16px 0"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <div style={{fontSize:20,fontWeight:800,color:T.text}}>Staff</div>
+      <button onClick={()=>setAddingStaff(v=>!v)} style={{background:addingStaff?T.bg:T.accent,color:addingStaff?T.sub:"#fff",border:`1px solid ${addingStaff?T.border:T.accent}`,borderRadius:20,padding:"7px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>{addingStaff?"Cancel":"+ Add Staff"}</button>
+    </div>
+    {addingStaff&&<Card style={{marginBottom:16,border:`1px solid ${T.accent}`}}>
+      <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:12}}>New Staff Member</div>
+      <input value={nName} onChange={e=>setNName(e.target.value)} placeholder="Full name" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",marginBottom:8,outline:"none"}}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <input type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value.replace(/\D/g,""))} placeholder="4-digit PIN" style={{padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,outline:"none"}}/>
+        <select value={nShift} onChange={e=>setNShift(e.target.value)} style={{padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,outline:"none",background:"#fff"}}>
+          <option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option>
+        </select>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <span style={{fontSize:13,fontWeight:700,color:T.sub,whiteSpace:"nowrap"}}>£ Hourly rate</span>
+        <input type="number" step="0.01" min="0" value={nRate} onChange={e=>setNRate(e.target.value)} style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,outline:"none"}}/>
+      </div>
+      {addErr&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:8}}>{addErr}</div>}
+      <button onClick={handleAddStaff} disabled={savingNew} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:savingNew?0.5:1}}>{savingNew?"Saving…":"Add Staff Member"}</button>
+    </Card>}
     {shopConfig.staff.map((s,i)=>{
       const color=SC[i%SC.length];
       const curr=recs.filter(r=>r.staff===s.name&&r.mins>0).reduce((a,r)=>a+r.mins,0);
@@ -615,7 +654,14 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig}){
   const staffNotes=(notes[name]||[]).slice().reverse();
   const addNote=async()=>{if(!newNote.trim())return;setSavingNote(true);const entry={text:newNote.trim(),date:todayStr(),author:"Owner"};const updated={...notes,[name]:[...(notes[name]||[]),entry]};try{await saveStaffNotes(shopConfig.id,updated);setNotes(updated);setNewNote("");}catch(e){}finally{setSavingNote(false);}};
   const deleteNote=async(idx)=>{const arr=[...(notes[name]||[])];arr.splice(arr.length-1-idx,1);const updated={...notes,[name]:arr};try{await saveStaffNotes(shopConfig.id,updated);setNotes(updated);}catch(e){}};
-  const curr=sRecs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);
+  const staffMember=shopConfig.staff.find(s=>s.name===name);
+  const hourlyRate=staffMember?.hourlyRate||12.21;
+  const todayMins=allRecs.filter(r=>r.staff===name&&r.date===today&&r.mins>0).reduce((a,r)=>a+r.mins,0);
+  const weekStart=new Date();weekStart.setDate(weekStart.getDate()-weekStart.getDay()+1);weekStart.setHours(0,0,0,0);
+  const weekMinsVal=allRecs.filter(r=>r.staff===name&&r.mins>0&&new Date(r.date)>=weekStart).reduce((a,r)=>a+r.mins,0);
+  const monthStart=new Date();monthStart.setDate(1);monthStart.setHours(0,0,0,0);
+  const monthMinsVal=allRecs.filter(r=>r.staff===name&&r.mins>0&&new Date(r.date)>=monthStart).reduce((a,r)=>a+r.mins,0);
+  const fmtPay=mins=>`£${((mins/60)*hourlyRate).toFixed(2)}`;
   const prev=prevRecs.filter(r=>r.staff===name&&r.mins>0).reduce((a,r)=>a+r.mins,0);
   const sc=consistScore(allRecs,name);
   const miss30=expDays.filter(d=>!sdm[name]?.has(d));
@@ -636,6 +682,13 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig}){
     <div style={{display:"flex",gap:6,marginBottom:14,overflowX:"auto",paddingBottom:2}}>{["overview","tasks","heatmap","trends","notes"].map(t=><button key={t} onClick={()=>setTab(t)} style={{background:tab===t?color:T.card,color:tab===t?"#fff":T.sub,border:`1px solid ${tab===t?color:T.border}`,borderRadius:20,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>)}</div>
     {tab==="overview"&&<>
       <Card style={{marginBottom:14}}>{[{l:"This Period",v:curr,col:color},{l:"Previous",v:prev,col:"#E5E7EB"}].map(row=><div key={row.l} style={{marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:13,fontWeight:600,color:T.sub}}>{row.l}</span><span style={{fontSize:13,fontWeight:800}}>{fmt(row.v)||"0m"}</span></div><PBar val={row.v} max={Math.max(curr,prev,1)} color={row.col}/></div>)}<div style={{display:"flex",justifyContent:"flex-end",marginTop:4}}><Chip p={pctChg(curr,prev)}/></div></Card>
+      <Lbl>💷 Estimated Pay · £{hourlyRate.toFixed(2)}/hr</Lbl>
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+          {[{l:"TODAY",mins:todayMins},{l:"THIS WEEK",mins:weekMinsVal},{l:"THIS MONTH",mins:monthMinsVal}].map(p=><div key={p.l} style={{background:T.bg,borderRadius:10,padding:"10px 8px",textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,color:T.muted,marginBottom:4}}>{p.l}</div><div style={{fontSize:16,fontWeight:800,color:T.text}}>{fmtPay(p.mins)}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{fmt(p.mins)||"0m"}</div></div>)}
+        </div>
+        <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.div}`,fontSize:12,color:T.muted}}>Based on logged hours · Holiday pay & deductions not included</div>
+      </Card>
       <Lbl>Time by Category</Lbl><Card style={{marginBottom:14}}>{catBreak.map(c=><div key={c.c} style={{marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:13,fontWeight:600,color:T.sub}}>{c.c}</span><span style={{fontSize:13,fontWeight:700}}>{fmt(c.v)} <span style={{color:T.muted,fontWeight:400}}>({c.p}%)</span></span></div><PBar val={c.p} max={100} color={color}/></div>)}{!catBreak.length&&<p style={{color:T.muted,fontSize:14,margin:0}}>No data for this period.</p>}</Card>
       {miss30.length>0&&<><Lbl>Missing Submissions</Lbl><Card style={{marginBottom:14}}><div style={{fontSize:22,fontWeight:800,color:T.red,marginBottom:8}}>{miss30.length} <span style={{fontSize:13,color:T.muted,fontWeight:400}}>days</span></div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{miss30.slice(0,8).map(d=><span key={d} style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:600,padding:"4px 10px",borderRadius:20}}>{new Date(d).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"})}</span>)}{miss30.length>8&&<span style={{fontSize:12,color:T.muted,padding:"4px 8px"}}>+{miss30.length-8} more</span>}</div></Card></>}
       <Lbl>Owner Insights</Lbl><Card style={{marginBottom:14}}>{insights.map((item,i)=><InsightRow key={i} item={item}/>)}</Card>
@@ -821,10 +874,10 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   const [view,setView]=useState("list");const [editShop,setEditShop]=useState(null);const [saving,setSaving]=useState(false);const [saveMsg,setSaveMsg]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null);const [deleting,setDeleting]=useState(false);
   const [fName,setFName]=useState("");const [fId,setFId]=useState("");const [fSector,setFSector]=useState("convenience");const [fHours,setFHours]=useState("6");const [fPin,setFPin]=useState("0000");const [fStaff,setFStaff]=useState([]);
-  const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");
+  const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");
   const openEdit=shop=>{setEditShop(shop);setFName(shop.shopName);setFId(shop.shopId);setFSector(shop.sector);setFHours(String(shop.shiftHours));setFPin(shop.ownerPin||"0000");setFStaff([...shop.staff]);setView("edit");};
   const openAdd=()=>{setEditShop(null);setFName("");setFId("");setFSector("convenience");setFHours("6");setFPin("0000");setFStaff([]);setView("add");};
-  const addStaff=()=>{if(!nName.trim()||nPin.length!==4)return;setFStaff(p=>[...p,{name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift}]);setNName("");setNPin("");setNShift("morning");};
+  const addStaff=()=>{if(!nName.trim()||nPin.length!==4)return;setFStaff(p=>[...p,{name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift,hourlyRate:parseFloat(nRate)||12.21}]);setNName("");setNPin("");setNShift("morning");setNRate("12.21");};
   const handleSave=async()=>{if(!fName.trim()||!fId.trim())return;setSaving(true);setSaveMsg(null);try{const data={shopId:fId.trim().toLowerCase().replace(/\s+/g,"_"),shopName:fName.trim(),sector:fSector,shiftHours:parseInt(fHours)||6,staff:fStaff,ownerPin:fPin,ownerId};if(editShop)await updateShop(editShop.id,data);else await createShop(data);setSaveMsg("ok");await onShopsUpdated();setTimeout(()=>{setSaveMsg(null);setView("list");},1500);}catch(e){setSaveMsg(e.message||"Save failed");}finally{setSaving(false);}};
   const handleDelete=async()=>{if(!confirmDelete)return;setDeleting(true);try{await deleteShop(confirmDelete.id);await onShopsUpdated();setConfirmDelete(null);setView("list");}catch(e){setSaveMsg(e.message||"Delete failed");}finally{setDeleting(false);}};
   const inp={width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:15,color:T.text,boxSizing:"border-box",marginBottom:12,outline:"none"};
@@ -845,8 +898,8 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     <label style={lbl}>Sector</label><select style={inp} value={fSector} onChange={e=>setFSector(e.target.value)}><option value="convenience">🏪 Convenience Store</option><option value="gym">🏋️ Gym / Fitness</option><option value="cafe">☕ Cafe / Coffee Shop</option><option value="bar">🍺 Bar / Pub</option><option value="restaurant">🍽️ Restaurant</option><option value="hotel">🏨 Hotel</option></select>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><div><label style={lbl}>Shift Hours</label><input style={inp} type="number" value={fHours} onChange={e=>setFHours(e.target.value)} min="1" max="12"/></div><div><label style={lbl}>Owner PIN</label><input style={inp} type="text" maxLength={4} value={fPin} onChange={e=>setFPin(e.target.value)} placeholder="0000"/></div></div>
     <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:12,marginTop:4}}>Staff Members</div>
-    {fStaff.map((st,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:10,background:T.bg,borderRadius:10,padding:"10px 14px",marginBottom:8}}><Avatar name={st.name} size={32} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:T.text}}>{st.name}</div><div style={{fontSize:12,color:T.muted}}>PIN: {st.pin} · {st.shift}</div></div><button onClick={()=>setFStaff(p=>p.filter((_,j)=>j!==i))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>)}
-    <div style={{background:T.bg,borderRadius:12,padding:"14px",marginBottom:16,border:`1px dashed ${T.border}`}}><div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:10}}>Add Staff Member</div><input style={{...inp,marginBottom:8}} value={nName} onChange={e=>setNName(e.target.value)} placeholder="Name"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><input style={{...inp,marginBottom:8}} type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value)} placeholder="4-digit PIN"/><select style={{...inp,marginBottom:8}} value={nShift} onChange={e=>setNShift(e.target.value)}><option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option></select></div><button onClick={addStaff} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>+ Add to Staff List</button></div>
+    {fStaff.map((st,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:10,background:T.bg,borderRadius:10,padding:"10px 14px",marginBottom:8}}><Avatar name={st.name} size={32} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:T.text}}>{st.name}</div><div style={{fontSize:12,color:T.muted}}>PIN: {st.pin} · {st.shift} · £{(st.hourlyRate||12.21).toFixed(2)}/hr</div></div><input type="number" step="0.01" min="0" value={st.hourlyRate||12.21} onChange={e=>setFStaff(p=>p.map((s,j)=>j===i?{...s,hourlyRate:parseFloat(e.target.value)||12.21}:s))} style={{width:64,padding:"4px 6px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:12,textAlign:"center",color:T.text}}/><button onClick={()=>setFStaff(p=>p.filter((_,j)=>j!==i))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>)}
+    <div style={{background:T.bg,borderRadius:12,padding:"14px",marginBottom:16,border:`1px dashed ${T.border}`}}><div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:10}}>Add Staff Member</div><input style={{...inp,marginBottom:8}} value={nName} onChange={e=>setNName(e.target.value)} placeholder="Name"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><input style={{...inp,marginBottom:8}} type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value)} placeholder="4-digit PIN"/><select style={{...inp,marginBottom:8}} value={nShift} onChange={e=>setNShift(e.target.value)}><option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option></select></div><div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:8,alignItems:"center",marginBottom:8}}><span style={{fontSize:13,fontWeight:700,color:T.sub,whiteSpace:"nowrap"}}>£ Hourly Rate</span><input style={{...inp,marginBottom:0}} type="number" step="0.01" min="0" value={nRate} onChange={e=>setNRate(e.target.value)} placeholder="12.21"/></div><button onClick={addStaff} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>+ Add to Staff List</button></div>
     {saveMsg==="ok"&&<div style={{background:T.greenLight,color:T.green,borderRadius:10,padding:"12px 16px",fontSize:14,fontWeight:700,marginBottom:12}}>✓ Saved successfully!</div>}
     {saveMsg&&saveMsg!=="ok"&&<div style={{background:T.redLight,color:T.red,borderRadius:10,padding:"12px 16px",fontSize:14,marginBottom:12}}>⚠️ {saveMsg}</div>}
     <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
@@ -906,7 +959,7 @@ export default function App(){
     :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
     :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>
     :bottomTab==="benchmarks"?<BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>
-    :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>
+    :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops();}}/>
     :bottomTab==="actions"?<ActionsTab shopConfig={currentShop} shopId={currentShopId}/>
     :<ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>}
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:`1px solid ${T.border}`,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
