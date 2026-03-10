@@ -32,7 +32,7 @@ async function fetchAllShops(){const rows=await atFetchAll(AT_SHOPS,`{Active}=1`
 function parseRec(r){return{id:r.id,staff:r.fields["Staff Name"]||"",date:r.fields["Date"]||"",task:r.fields["Task Name"]||"",category:r.fields["Category"]||"",mins:Number(r.fields["Total Minutes"]||0),notes:r.fields["Task Notes"]||"",incident:r.fields["Shift Incident"]||"",week:Number(r.fields["Week Number"]||0),shopId:r.fields["Shop ID"]||"",shopName:r.fields["Store"]||"",sector:r.fields["Sector"]||""};}
 async function fetchShiftsForShop(shopId){const rows=await atFetchAll(AT_SHIFTS,`{Shop ID}="${shopId}"`);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
 async function fetchAllShifts(){const rows=await atFetchAll(AT_SHIFTS);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
-async function fetchSchedule(shopId,sector){const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;const rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);const sched=JSON.parse(JSON.stringify(defaults));rows.forEach(r=>{const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"],shiftStart=r.fields["Shift Start"]||"",shiftEnd=r.fields["Shift End"]||"";if(staff&&day&&tasks){try{if(!sched[day])sched[day]={};sched[day][staff]=JSON.parse(tasks);if(!sched[day]._ids)sched[day]._ids={};sched[day]._ids[staff]=r.id;if(!sched[day]._times)sched[day]._times={};if(shiftStart||shiftEnd)sched[day]._times[staff]={start:shiftStart,end:shiftEnd};}catch(e){}}});return sched;}
+async function fetchSchedule(shopId,sector){const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;const rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);const sched=JSON.parse(JSON.stringify(defaults));rows.forEach(r=>{const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"],shiftStart=(r.fields["Shift Start"]||"").trim(),shiftEnd=(r.fields["Shift End"]||"").trim();if(staff&&day){try{if(!sched[day])sched[day]={};if(tasks)sched[day][staff]=JSON.parse(tasks);if(!sched[day]._ids)sched[day]._ids={};sched[day]._ids[staff]=r.id;if(shiftStart||shiftEnd){if(!sched[day]._times)sched[day]._times={};sched[day]._times[staff]={start:shiftStart,end:shiftEnd};}}catch(e){}}});return sched;}
 
 // ─── PERFORMANCE NOTES (stored in Shops table as JSON in Staff field extension) ─
 // We store notes as a separate key in Airtable Shops: "Staff Notes" (Long text, JSON)
@@ -58,7 +58,26 @@ async function saveAbsences(shopRecordId,absences){
   if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Save failed");}
   return r.json();
 }
-function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Shop ID":shopId,"Last Updated":new Date().toISOString().split("T")[0],"Shift Start":shiftStart||"","Shift End":shiftEnd||""};if(existingId){return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Save failed");return existingId;});}else{return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Create failed");return r.json();}).then(d=>d.id);}}
+function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){
+  const baseFields={
+    "Staff Name":staff,
+    "Day":day,
+    "Tasks":JSON.stringify(tasks),
+    "Shop ID":shopId,
+    "Last Updated":new Date().toISOString().split("T")[0],
+  };
+  // Only include shift time fields if they have values, to avoid errors on missing Airtable fields
+  const s=(shiftStart||"").trim();const e=(shiftEnd||"").trim();
+  if(s||e){baseFields["Shift Start"]=s;baseFields["Shift End"]=e;}
+  if(existingId){
+    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:baseFields})})
+      .then(async r=>{if(!r.ok){const e=await r.json();console.error("PATCH failed:",JSON.stringify(e));throw new Error(e?.error?.message||"Save failed");}return existingId;});
+  }else{
+    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:baseFields})})
+      .then(async r=>{if(!r.ok){const e=await r.json();console.error("POST failed:",JSON.stringify(e));throw new Error(e?.error?.message||"Create failed");}return r.json();})
+      .then(d=>d.id);
+  }
+}
 async function createShop(data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:{"Shop ID":data.shopId,"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin,"Owner ID":data.ownerId,"Active":true}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
 async function updateShop(recordId,data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
 async function deleteShop(recordId){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Active":false}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
@@ -654,11 +673,10 @@ function ActionsTab({shopConfig,shopId}){
   const todayTasks=schedule&&selStaff&&schedule[selDay]?(schedule[selDay][selStaff]!==undefined?schedule[selDay][selStaff]:schedule[selDay]._all||[]):[];
   const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
   const existingId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
-  function persistChange(newTasks,start,end){
+  function persistChange(newTasks,start,end,forceCurrId){
     const s=start!==undefined?start:shiftStart;
     const e=end!==undefined?end:shiftEnd;
-    // get the most current existingId from schedule state
-    const currId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
+    const currId=forceCurrId!==undefined?forceCurrId:existingId;
     setSaving(true);setSaveStatus(null);
     saveScheduleToAirtable(schedule,shopId,selDay,selStaff,newTasks,currId,s,e).then(newId=>{
       setSchedule(prev=>{
@@ -672,10 +690,23 @@ function ActionsTab({shopConfig,shopId}){
         return u;
       });
       setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);
-    }).catch(()=>{setSaveStatus("err");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);});
+    }).catch((err)=>{setSaveStatus("err");setSaving(false);console.error("Save failed:",err);setTimeout(()=>setSaveStatus(null),2500);});
   }
-  function removeTask(task){const nt=todayTasks.filter(t=>t!==task);setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);}
-  function addTask(t){if(!t.trim())return;if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}const nt=[...todayTasks,t];setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);setNewTask("");setAdding(false);}
+  function removeTask(task){
+    const nt=todayTasks.filter(t=>t!==task);
+    const currId=existingId; // capture before state update
+    setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});
+    persistChange(nt,undefined,undefined,currId);
+  }
+  function addTask(t){
+    if(!t.trim())return;
+    if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}
+    const nt=[...todayTasks,t];
+    const currId=existingId; // capture before state update
+    setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});
+    persistChange(nt,undefined,undefined,currId);
+    setNewTask("");setAdding(false);
+  }
   const [absError,setAbsError]=useState(null);
   const addAbsence=async()=>{
     if(!absFrom||!selStaff)return;setSavingAbs(true);setAbsError(null);
