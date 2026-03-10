@@ -24,7 +24,7 @@ const SECTOR_DEFAULTS={
 };
 const DEFAULT_SCHEDULE=SECTOR_DEFAULTS.convenience;
 
-async function atFetchAll(tableId,formula){let rows=[],offset=null;do{const url=new URL(`https://api.airtable.com/v0/${AT_BASE}/${tableId}`);url.searchParams.set("pageSize","100");if(formula)url.searchParams.set("filterByFormula",formula);if(offset)url.searchParams.set("offset",offset);const r=await fetch(url.toString(),{headers:{"Authorization":`Bearer ${AT_TOKEN}`}});if(!r.ok)throw new Error("Airtable fetch failed");const d=await r.json();rows=[...rows,...d.records];offset=d.offset||null;}while(offset);return rows;}
+async function atFetchAll(tableId,formula){let rows=[],offset=null;do{let url=`https://api.airtable.com/v0/${AT_BASE}/${tableId}?pageSize=100`;if(formula)url+=`&filterByFormula=${encodeURIComponent(formula)}`;if(offset)url+=`&offset=${encodeURIComponent(offset)}`;const r=await fetch(url,{headers:{"Authorization":`Bearer ${AT_TOKEN}`}});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Airtable fetch failed");}const d=await r.json();rows=[...rows,...d.records];offset=d.offset||null;}while(offset);return rows;}
 function getOwnerIdFromURL(){return new URLSearchParams(window.location.search).get("owner")||null;}
 function parseShop(r){return{id:r.id,shopId:r.fields["Shop ID"]||"",shopName:r.fields["Shop Name"]||"",sector:(r.fields["Sector"]||"convenience").toLowerCase(),shiftHours:parseInt(r.fields["Shift Hours"]||6),staff:(()=>{try{return JSON.parse(r.fields["Staff"]||"[]");}catch{return[];}})(),ownerPin:r.fields["Owner PIN"]||"0000",ownerId:r.fields["Owner ID"]||""};}
 async function fetchOwnerShops(ownerId){const rows=await atFetchAll(AT_SHOPS,`AND({Active}=1,{Owner ID}="${ownerId}")`);return rows.map(parseShop);}
@@ -32,7 +32,18 @@ async function fetchAllShops(){const rows=await atFetchAll(AT_SHOPS,`{Active}=1`
 function parseRec(r){return{id:r.id,staff:r.fields["Staff Name"]||"",date:r.fields["Date"]||"",task:r.fields["Task Name"]||"",category:r.fields["Category"]||"",mins:Number(r.fields["Total Minutes"]||0),notes:r.fields["Task Notes"]||"",incident:r.fields["Shift Incident"]||"",week:Number(r.fields["Week Number"]||0),shopId:r.fields["Shop ID"]||"",shopName:r.fields["Store"]||"",sector:r.fields["Sector"]||""};}
 async function fetchShiftsForShop(shopId){const rows=await atFetchAll(AT_SHIFTS,`{Shop ID}="${shopId}"`);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
 async function fetchAllShifts(){const rows=await atFetchAll(AT_SHIFTS);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
-async function fetchSchedule(shopId,sector){const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;const rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);const sched=JSON.parse(JSON.stringify(defaults));rows.forEach(r=>{const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"],shiftStart=(r.fields["Shift Start"]||"").trim(),shiftEnd=(r.fields["Shift End"]||"").trim();if(staff&&day){try{if(!sched[day])sched[day]={};if(tasks)sched[day][staff]=JSON.parse(tasks);if(!sched[day]._ids)sched[day]._ids={};sched[day]._ids[staff]=r.id;if(shiftStart||shiftEnd){if(!sched[day]._times)sched[day]._times={};sched[day]._times[staff]={start:shiftStart,end:shiftEnd};}}catch(e){}}});return sched;}
+async function fetchSchedule(shopId,sector,staffNames){
+  const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;
+  // Try fetching by Shop ID first; if that returns nothing (linked field issue), fall back to fetching by Staff Names
+  let rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);
+  if(rows.length===0&&staffNames&&staffNames.length>0){
+    const orClauses=staffNames.map(n=>`{Staff Name}="${n}"`).join(",");
+    rows=await atFetchAll(AT_TASKS,`OR(${orClauses})`);
+  }
+  const sched=JSON.parse(JSON.stringify(defaults));
+  rows.forEach(r=>{const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"],shiftStart=(r.fields["Shift Start"]||"").trim(),shiftEnd=(r.fields["Shift End"]||"").trim();if(staff&&day){try{if(!sched[day])sched[day]={};if(tasks)sched[day][staff]=JSON.parse(tasks);if(!sched[day]._ids)sched[day]._ids={};sched[day]._ids[staff]=r.id;if(shiftStart||shiftEnd){if(!sched[day]._times)sched[day]._times={};sched[day]._times[staff]={start:shiftStart,end:shiftEnd};}}catch(e){}}});
+  return sched;
+}
 
 // ─── PERFORMANCE NOTES (stored in Shops table as JSON in Staff field extension) ─
 // We store notes as a separate key in Airtable Shops: "Staff Notes" (Long text, JSON)
@@ -60,24 +71,35 @@ async function saveAbsences(shopRecordId,absences){
 }
 function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){
   const s=(shiftStart||"").trim();const e=(shiftEnd||"").trim();
-  // Build fields - never include Shop ID on PATCH (may be linked/computed)
-  const patchFields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Last Updated":new Date().toISOString().split("T")[0]};
-  if(s||e){patchFields["Shift Start"]=s;patchFields["Shift End"]=e;}
-  const postFields={...patchFields,"Shop ID":shopId};
+  const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Shop ID":shopId,"Last Updated":new Date().toISOString().split("T")[0]};
+  if(s)fields["Shift Start"]=s;
+  if(e)fields["Shift End"]=e;
 
   if(existingId){
-    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:patchFields})})
-      .then(async r=>{if(!r.ok){const err=await r.json();throw new Error(err?.error?.message||"Save failed");}return existingId;});
-  }else{
-    // Try POST with Shop ID first; if that field errors, retry without it
-    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:postFields})})
+    // On PATCH: try with Shop ID, if rejected try without (linked field issue)
+    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})})
       .then(async r=>{
         if(!r.ok){
           const err=await r.json();
           const msg=err?.error?.message||"";
           if(msg.includes("Shop ID")){
-            // Retry without Shop ID
-            return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:patchFields})})
+            const f2={...fields};delete f2["Shop ID"];
+            return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:f2})})
+              .then(async r2=>{if(!r2.ok){const e2=await r2.json();throw new Error(e2?.error?.message||"Update failed");}return existingId;});
+          }
+          throw new Error(msg||"Save failed");
+        }
+        return existingId;
+      });
+  }else{
+    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})})
+      .then(async r=>{
+        if(!r.ok){
+          const err=await r.json();
+          const msg=err?.error?.message||"";
+          if(msg.includes("Shop ID")){
+            const f2={...fields};delete f2["Shop ID"];
+            return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:f2})})
               .then(async r2=>{if(!r2.ok){const e2=await r2.json();throw new Error(e2?.error?.message||"Create failed");}return r2.json();});
           }
           throw new Error(msg||"Create failed");
@@ -675,7 +697,7 @@ function ActionsTab({shopConfig,shopId}){
   // Load absences when shop loads
   useEffect(()=>{if(shopConfig?.id)fetchAbsences(shopConfig.id).then(setAbsences).catch(()=>{});},[shopConfig?.id]);
   // Fetch schedule when a staff member is selected for the current shop
-  useEffect(()=>{if(!selStaff||!shopId)return;setLoadingS(true);setSchedule(null);fetchSchedule(shopId,shopConfig.sector).then(s=>{setSchedule(s);setLoadingS(false);}).catch(()=>{setSchedule(JSON.parse(JSON.stringify(SECTOR_DEFAULTS[shopConfig.sector]||SECTOR_DEFAULTS.convenience)));setLoadingS(false);});},[selStaff,shopId]);
+  useEffect(()=>{if(!selStaff||!shopId)return;setLoadingS(true);setSchedule(null);const staffNames=shopConfig.staff.map(s=>s.name);fetchSchedule(shopId,shopConfig.sector,staffNames).then(s=>{setSchedule(s);setLoadingS(false);}).catch(()=>{setSchedule(JSON.parse(JSON.stringify(SECTOR_DEFAULTS[shopConfig.sector]||SECTOR_DEFAULTS.convenience)));setLoadingS(false);});},[selStaff,shopId]);
   // Load current times when day or staff changes
   useEffect(()=>{if(!schedule||!selStaff)return;const t=schedule[selDay]?._times?.[selStaff];setShiftStart(t?.start||"");setShiftEnd(t?.end||"");},[schedule,selDay,selStaff]);
   // Staff-specific tasks first, then sector default for the day, then empty
