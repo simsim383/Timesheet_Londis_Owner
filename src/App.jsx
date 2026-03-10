@@ -579,50 +579,12 @@ function BenchmarksTab({allRecs,allShifts,allShops,shopConfig,currentShopId,owne
 
 function StaffTab({allRecs,expDays,onNav,shopConfig,onShopConfigUpdated}){
   const [period,setPeriod]=useState("week");
-  const [addingStaff,setAddingStaff]=useState(false);
-  const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");
-  const [savingNew,setSavingNew]=useState(false);const [addErr,setAddErr]=useState(null);
   const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
   const prevRecs=useMemo(()=>filterPrev(allRecs,period),[allRecs,period]);
   const sdm=useMemo(()=>staffDatesMap(allRecs,shopConfig.staff.map(s=>s.name)),[allRecs]);
   const today=todayStr();const isWorkDay=WDAYS.includes(new Date().getDay());
-
-  const handleAddStaff=async()=>{
-    if(!nName.trim()){setAddErr("Enter a name");return;}
-    if(nPin.length!==4||!/^\d{4}$/.test(nPin)){setAddErr("PIN must be 4 digits");return;}
-    if(shopConfig.staff.find(s=>s.pin===nPin)){setAddErr("That PIN is already in use");return;}
-    setSavingNew(true);setAddErr(null);
-    const newStaff={name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift,hourlyRate:parseFloat(nRate)||12.21};
-    const updated=[...shopConfig.staff,newStaff];
-    try{
-      await updateShop(shopConfig.id,{...shopConfig,staff:updated});
-      await onShopConfigUpdated();
-      setNName("");setNPin("");setNShift("morning");setNRate("12.21");setAddingStaff(false);
-    }catch(e){setAddErr(e.message||"Save failed");}
-    finally{setSavingNew(false);}
-  };
-
   return <div style={{paddingBottom:90}}><PeriodToggle period={period} setPeriod={setPeriod}/><div style={{padding:"14px 16px 0"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-      <div style={{fontSize:20,fontWeight:800,color:T.text}}>Staff</div>
-      <button onClick={()=>setAddingStaff(v=>!v)} style={{background:addingStaff?T.bg:T.accent,color:addingStaff?T.sub:"#fff",border:`1px solid ${addingStaff?T.border:T.accent}`,borderRadius:20,padding:"7px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>{addingStaff?"Cancel":"+ Add Staff"}</button>
-    </div>
-    {addingStaff&&<Card style={{marginBottom:16,border:`1px solid ${T.accent}`}}>
-      <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:12}}>New Staff Member</div>
-      <input value={nName} onChange={e=>setNName(e.target.value)} placeholder="Full name" style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",marginBottom:8,outline:"none"}}/>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <input type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value.replace(/\D/g,""))} placeholder="4-digit PIN" style={{padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,outline:"none"}}/>
-        <select value={nShift} onChange={e=>setNShift(e.target.value)} style={{padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,outline:"none",background:"#fff"}}>
-          <option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option>
-        </select>
-      </div>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-        <span style={{fontSize:13,fontWeight:700,color:T.sub,whiteSpace:"nowrap"}}>£ Hourly rate</span>
-        <input type="number" step="0.01" min="0" value={nRate} onChange={e=>setNRate(e.target.value)} style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,outline:"none"}}/>
-      </div>
-      {addErr&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:8}}>{addErr}</div>}
-      <button onClick={handleAddStaff} disabled={savingNew} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:savingNew?0.5:1}}>{savingNew?"Saving…":"Add Staff Member"}</button>
-    </Card>}
+    <div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:14}}>Staff</div>
     {shopConfig.staff.map((s,i)=>{
       const color=SC[i%SC.length];
       const curr=recs.filter(r=>r.staff===s.name&&r.mins>0).reduce((a,r)=>a+r.mins,0);
