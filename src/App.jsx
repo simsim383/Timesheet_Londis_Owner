@@ -185,7 +185,7 @@ function PeriodToggle({period,setPeriod}){return <div style={{display:"flex",gap
 
 function ShopSwitcher({shops,currentShopId,onSelect,onClose}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 48px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:16}}>Your Businesses</div>{shops.map((shop,i)=><button key={shop.shopId} onClick={()=>{onSelect(shop.shopId);onClose();}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:shop.shopId===currentShopId?"#111":T.bg,borderRadius:14,border:`1px solid ${shop.shopId===currentShopId?"#111":T.border}`,cursor:"pointer",marginBottom:8,textAlign:"left"}}><span style={{fontSize:26}}>{SECTOR_ICONS[shop.sector]||"🏢"}</span><div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:shop.shopId===currentShopId?"#fff":T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:shop.shopId===currentShopId?"rgba(255,255,255,0.5)":T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div></div>{shop.shopId===currentShopId&&<span style={{color:"#fff"}}>✓</span>}</button>)}</div></div>;}
 
-function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,expDays}){
+function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,expDays,dataLoading}){
   const [period,setPeriod]=useState("today");
   const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
   const prevRecs=useMemo(()=>filterPrev(allRecs,period),[allRecs,period]);
@@ -213,6 +213,7 @@ function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,expDays}){
   const pLabel={today:"Today",week:"This Week",month:"This Month"}[period];
   const prLabel={today:"Yesterday",week:"Last Week",month:"Last Month"}[period];
   return <div style={{paddingBottom:90}}>
+    {dataLoading&&<div style={{height:3,background:T.div,position:"sticky",top:64,zIndex:10}}><div style={{height:"100%",background:T.accent,width:"60%",borderRadius:99,animation:"loadbar 1.2s ease-in-out infinite"}}/><style>{"@keyframes loadbar{0%{width:0%;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0%;margin-left:100%}}"}</style></div>}
     <PeriodToggle period={period} setPeriod={setPeriod}/>
     <Card style={{background:"#111",border:"none",margin:"12px 16px 0"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
@@ -443,17 +444,16 @@ export default function App(){
         </div>
       </div>
     </div>
-    {dataLoading&&!myRecs.length?<div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"80px 0"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/><p style={{color:T.muted,marginTop:16,fontSize:15}}>Loading shift data…</p></div>
-    :!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
+    {!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
     :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
-    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} expDays={expDays}/>
+    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} expDays={expDays} dataLoading={dataLoading}/>
     :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>
     :bottomTab==="actions"?<ActionsTab shopConfig={currentShop} shopId={currentShopId}/>
     :<ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>}
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:`1px solid ${T.border}`,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
       {[{id:"home",icon:"🏠",label:"Home"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"},{id:"manage",icon:"⚙️",label:"Businesses"}].map(tab=><button key={tab.id} onClick={()=>{setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><span style={{fontSize:20}}>{tab.icon}</span><span style={{fontSize:10,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>{bottomTab===tab.id&&!isSubPage&&<div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}</button>)}
     </div>
-    {showSwitcher&&<ShopSwitcher shops={shops} currentShopId={currentShopId} onSelect={id=>{setCurrentShopId(id);setMyRecs([]);}} onClose={()=>setShowSwitcher(false)}/>}
+    {showSwitcher&&<ShopSwitcher shops={shops} currentShopId={currentShopId} onSelect={id=>{setCurrentShopId(id);setSubNav(null);setShowSwitcher(false);}} onClose={()=>setShowSwitcher(false)}/>}
     <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{display:none}"}</style>
   </div>;
 }
