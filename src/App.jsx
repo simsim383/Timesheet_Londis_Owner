@@ -673,11 +673,12 @@ function ActionsTab({shopConfig,shopId}){
   const todayTasks=schedule&&selStaff&&schedule[selDay]?(schedule[selDay][selStaff]!==undefined?schedule[selDay][selStaff]:schedule[selDay]._all||[]):[];
   const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
   const existingId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
+  const [saveError,setSaveError]=useState(null);
   function persistChange(newTasks,start,end,forceCurrId){
     const s=start!==undefined?start:shiftStart;
     const e=end!==undefined?end:shiftEnd;
     const currId=forceCurrId!==undefined?forceCurrId:existingId;
-    setSaving(true);setSaveStatus(null);
+    setSaving(true);setSaveStatus(null);setSaveError(null);
     saveScheduleToAirtable(schedule,shopId,selDay,selStaff,newTasks,currId,s,e).then(newId=>{
       setSchedule(prev=>{
         const u=JSON.parse(JSON.stringify(prev));
@@ -690,11 +691,11 @@ function ActionsTab({shopConfig,shopId}){
         return u;
       });
       setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);
-    }).catch((err)=>{setSaveStatus("err");setSaving(false);console.error("Save failed:",err);setTimeout(()=>setSaveStatus(null),2500);});
+    }).catch((err)=>{setSaveStatus("err");setSaveError(err.message||"Unknown error");setSaving(false);setTimeout(()=>{setSaveStatus(null);},5000);});
   }
   function removeTask(task){
     const nt=todayTasks.filter(t=>t!==task);
-    const currId=existingId; // capture before state update
+    const currId=existingId;
     setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});
     persistChange(nt,undefined,undefined,currId);
   }
@@ -702,12 +703,13 @@ function ActionsTab({shopConfig,shopId}){
     if(!t.trim())return;
     if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}
     const nt=[...todayTasks,t];
-    const currId=existingId; // capture before state update
+    const currId=existingId;
     setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});
     persistChange(nt,undefined,undefined,currId);
     setNewTask("");setAdding(false);
   }
   const [absError,setAbsError]=useState(null);
+  const [confirmAbs,setConfirmAbs]=useState(null); // group to confirm removal
   const addAbsence=async()=>{
     if(!absFrom||!selStaff)return;setSavingAbs(true);setAbsError(null);
     const endDate=absTo&&absTo>=absFrom?absTo:absFrom;
@@ -720,7 +722,14 @@ function ActionsTab({shopConfig,shopId}){
     catch(e){setAbsError(e.message||"Save failed — check connection");}
     finally{setSavingAbs(false);};
   };
-  const removeAbsence=async(date)=>{const staffAbs=(absences[selStaff]||[]).filter(a=>a.date!==date);const updated={...absences,[selStaff]:staffAbs};try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);}catch(e){setAbsError(e.message||"Remove failed");}};
+  const removeAbsenceGroup=async(group)=>{
+    const datesToRemove=new Set(group.dates);
+    const staffAbs=(absences[selStaff]||[]).filter(a=>!datesToRemove.has(a.date));
+    const updated={...absences,[selStaff]:staffAbs};
+    try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);}
+    catch(e){setAbsError(e.message||"Remove failed");}
+    setConfirmAbs(null);
+  };
   const staffAbs=(absences[selStaff]||[]).sort((a,b)=>b.date.localeCompare(a.date));
   const staffIdx=selStaff?shopConfig.staff.findIndex(s=>s.name===selStaff):0;
   const staffColor=SC[staffIdx%SC.length];
@@ -739,7 +748,8 @@ function ActionsTab({shopConfig,shopId}){
   if(!selStaff)return <div style={{padding:"16px 16px 90px"}}><div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:4}}>Actions</div><div style={{fontSize:14,color:T.sub,marginBottom:20}}>Edit schedules and track absences for each staff member.</div>{shopConfig.staff.map((s,i)=>{const absCount=(absences[s.name]||[]).filter(a=>{const d=new Date(a.date);const now=new Date();const diff=(now-d)/(1000*60*60*24);return diff<=30;}).length;return <Card key={s.name} style={{marginBottom:10}} onPress={()=>setSelStaff(s.name)}><div style={{display:"flex",alignItems:"center",gap:12}}><Avatar name={s.name} size={46} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{s.name}</div><div style={{fontSize:13,color:T.muted}}>{s.shift} shift · Tap to edit</div></div>{absCount>0&&<span style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:700,padding:"3px 8px",borderRadius:20}}>{absCount} abs</span>}<span style={{fontSize:20,color:T.muted}}>›</span></div></Card>;})}
     </div>;
   return <div style={{padding:"0 16px 90px"}}>
-    <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}><button onClick={()=>setSelStaff(null)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><Avatar name={selStaff} size={36} color={staffColor}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff}</div><div style={{fontSize:12,color:T.muted}}>{shopConfig.staff.find(s=>s.name===selStaff)?.shift} shift</div></div>{saving&&<span style={{fontSize:12,color:T.muted}}>Saving…</span>}{saveStatus==="ok"&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Synced</span>}{saveStatus==="err"&&<span style={{fontSize:12,color:T.red,fontWeight:700}}>⚠ Failed</span>}</div>
+    <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}><button onClick={()=>setSelStaff(null)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><Avatar name={selStaff} size={36} color={staffColor}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff}</div><div style={{fontSize:12,color:T.muted}}>{shopConfig.staff.find(s=>s.name===selStaff)?.shift} shift</div></div>{saving&&<span style={{fontSize:12,color:T.muted}}>Saving…</span>}{saveStatus==="ok"&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Saved</span>}{saveStatus==="err"&&<span style={{fontSize:12,color:T.red,fontWeight:700}}>⚠ Failed</span>}</div>
+    {saveError&&<div style={{background:T.redLight,border:`1px solid ${T.red}`,borderRadius:10,padding:"10px 14px",fontSize:12,color:T.red,marginBottom:12,wordBreak:"break-all"}}>❌ Error: {saveError}</div>}
     <div style={{display:"flex",gap:8,marginBottom:16}}><button onClick={()=>setActiveSection("schedule")} style={{flex:1,background:activeSection==="schedule"?staffColor:T.bg,color:activeSection==="schedule"?"#fff":T.sub,border:`1px solid ${activeSection==="schedule"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋 Schedule</button><button onClick={()=>setActiveSection("absences")} style={{flex:1,background:activeSection==="absences"?staffColor:T.bg,color:activeSection==="absences"?"#fff":T.sub,border:`1px solid ${activeSection==="absences"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📅 Absences {staffAbs.length>0&&`(${groupedAbs.length})`}</button></div>
     {activeSection==="absences"&&<>
       <Lbl>Log Absence</Lbl>
@@ -753,10 +763,12 @@ function ActionsTab({shopConfig,shopId}){
         {absError&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:600,marginBottom:8}}>{absError}</div>}
         <button onClick={addAbsence} disabled={!absFrom||savingAbs} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"11px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:!absFrom||savingAbs?0.5:1}}>{savingAbs?"Saving…":"+ Log Absence"}</button>
       </Card>
-      {groupedAbs.length>0?<><Lbl>Record ({staffAbs.length} days)</Lbl><Card>{groupedAbs.map((g,i)=>{const isSingle=g.from===g.to;return <div key={g.from} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>Absent</span><div style={{flex:1}}>{isSingle?<div style={{fontSize:13,color:T.sub}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>:<><div style={{fontSize:13,fontWeight:700,color:T.text}}>{g.dates.length} days</div><div style={{fontSize:11,color:T.muted}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(g.to+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div></>}{g.comment&&<div style={{fontSize:11,color:T.muted,marginTop:2,fontStyle:"italic"}}>"{g.comment}"</div>}</div><button onClick={()=>g.dates.forEach(d=>removeAbsence(d))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
+      {groupedAbs.length>0?<><Lbl>Record ({staffAbs.length} days)</Lbl><Card>{groupedAbs.map((g,i)=>{const isSingle=g.from===g.to;const fmtD=d=>new Date(d+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"});return <div key={g.from} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>Absent</span><div style={{flex:1}}>{isSingle?<div style={{fontSize:13,color:T.sub}}>{fmtD(g.from)}</div>:<><div style={{fontSize:13,fontWeight:700,color:T.text}}>{fmtD(g.from)} – {fmtD(g.to)}</div><div style={{fontSize:11,color:T.muted}}>{g.dates.length} days</div></>}{g.comment&&<div style={{fontSize:11,color:T.muted,marginTop:2,fontStyle:"italic"}}>"{g.comment}"</div>}</div><button onClick={()=>setConfirmAbs(g)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
       </Card></>:<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"24px 0"}}>No absences logged for {selStaff}.</p>}
+      {confirmAbs&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setConfirmAbs(null)}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 40px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{fontSize:17,fontWeight:800,color:T.text,marginBottom:8,textAlign:"center"}}>Remove Absence?</div><div style={{fontSize:14,color:T.sub,textAlign:"center",marginBottom:6,lineHeight:1.6}}>{confirmAbs.from===confirmAbs.to?`Remove absence on ${new Date(confirmAbs.from+"T12:00:00").toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"short"})}`:`Remove ${confirmAbs.dates.length} day absence period for ${selStaff}?`}</div>{confirmAbs.comment&&<div style={{fontSize:13,color:T.muted,textAlign:"center",marginBottom:6,fontStyle:"italic"}}>"{confirmAbs.comment}"</div>}<div style={{fontSize:12,color:T.muted,textAlign:"center",marginBottom:24}}>This cannot be undone.</div><div style={{display:"flex",gap:10}}><button onClick={()=>setConfirmAbs(null)} style={{flex:1,padding:"14px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:`1px solid ${T.border}`,cursor:"pointer"}}>Cancel</button><button onClick={()=>removeAbsenceGroup(confirmAbs)} style={{flex:1,padding:"14px",borderRadius:14,background:T.red,color:"#fff",fontSize:15,fontWeight:700,border:"none",cursor:"pointer"}}>Remove</button></div></div></div>}
     </>}
     {activeSection==="schedule"&&<>
+    {saveError&&<div style={{background:"#fef2f2",border:"1px solid #dc2626",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#dc2626",marginBottom:12,lineHeight:1.6}}><strong>Airtable Error:</strong> {saveError}<br/><span style={{opacity:0.8}}>Check that your TaskSchedules table has fields: Staff Name, Day, Tasks, Shop ID (all Single line text). Shift Start and Shift End are optional.</span></div>}
     <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>{ALL_DAYS.map(d=><button key={d} onClick={()=>setSelDay(d)} style={{background:selDay===d?staffColor:"#fff",color:selDay===d?"#fff":T.sub,border:`1px solid ${selDay===d?staffColor:T.border}`,borderRadius:20,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{d.slice(0,3)}</button>)}</div>
     {loadingS?<div style={{display:"flex",alignItems:"center",gap:10,padding:"24px 0",color:T.muted,fontSize:14}}><div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${T.div}`,borderTop:`2px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/>Loading schedule…</div>:<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><Lbl>{selDay} Tasks ({todayTasks.length})</Lbl><button onClick={()=>setAdding(true)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add</button></div>
@@ -766,8 +778,8 @@ function ActionsTab({shopConfig,shopId}){
           <div><div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>Start</div><input type="time" value={shiftStart} onChange={e=>setShiftStart(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
           <div><div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>End</div><input type="time" value={shiftEnd} onChange={e=>setShiftEnd(e.target.value)} style={{width:"100%",padding:"9px 10px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
         </div>
-        <button onClick={()=>persistChange(todayTasks,shiftStart,shiftEnd)} disabled={saving} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,color:T.sub,cursor:"pointer",opacity:saving?0.5:1}}>Save Times</button>
-        {shiftStart&&shiftEnd&&<span style={{fontSize:12,color:T.muted,marginLeft:10}}>Shows to staff as {shiftStart} – {shiftEnd}</span>}
+        <button onClick={()=>{const currId=existingId;persistChange(todayTasks,shiftStart,shiftEnd,currId);}} disabled={saving} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>💾 Save Times</button>
+        {shiftStart&&shiftEnd&&<span style={{fontSize:12,color:T.muted,marginLeft:10}}>Staff will see {shiftStart} – {shiftEnd}</span>}
       </Card>
       {adding&&<Card style={{marginBottom:12,border:`1px solid ${T.accent}`}}><div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {selDay}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{unusedTasks.slice(0,12).map(t=><button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>)}</div><div style={{display:"flex",gap:8}}><input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask(newTask);}} placeholder="Or type a custom task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/><button onClick={()=>addTask(newTask)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button></div><button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button></Card>}
       <Card>{todayTasks.length===0&&<p style={{color:T.muted,fontSize:14,margin:0}}>No tasks for {selDay}. Tap + Add.</p>}{todayTasks.map((task,i)=><div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><div style={{width:10,height:10,borderRadius:"50%",background:T.accent,flexShrink:0}}/><span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span><button onClick={()=>setConfirmTask(task)} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button></div>)}</Card>
