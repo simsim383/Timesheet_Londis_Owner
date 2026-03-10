@@ -676,7 +676,7 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig,onBack,onRemoveStaff
   const wkTrend=useMemo(()=>{const wks=[...new Set(allRecs.filter(r=>r.staff===name).map(r=>"W"+r.week))].sort();return wks.map(wk=>({week:wk,hours:+(wkMins(allRecs,name,+wk.slice(1))/60).toFixed(1)}));},[allRecs,name]);
   const insights=useMemo(()=>genStaffInsights(name,recs,allRecs,period),[name,recs,allRecs,period]);
   const staffShift=shopConfig.staff.find(s=>s.name===name)?.shift||"";
-  return <div style={{paddingBottom:90}}><PeriodToggle period={period} setPeriod={setPeriod}/><div style={{padding:"12px 16px 0"}}>
+  return <><div style={{paddingBottom:90}}><PeriodToggle period={period} setPeriod={setPeriod}/><div style={{padding:"12px 16px 0"}}>
     <Card style={{marginBottom:14}}>
       <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
         <Avatar name={name} size={52} color={color}/>
@@ -725,7 +725,7 @@ function StaffDetail({name,allRecs,expDays,onNav,shopConfig,onBack,onRemoveStaff
     </>}
   </div></div>
   {confirmRemove&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>!removing&&setConfirmRemove(false)}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{width:56,height:56,borderRadius:"50%",background:T.redLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 14px"}}>👤</div><div style={{fontSize:18,fontWeight:800,color:T.text,textAlign:"center",marginBottom:8}}>Remove {name}?</div><div style={{fontSize:14,color:T.sub,textAlign:"center",lineHeight:1.7,marginBottom:6}}>This will remove {name} from the staff list and they will no longer be able to log in.</div><div style={{fontSize:13,color:T.muted,textAlign:"center",marginBottom:24}}>Historical shift data will be retained.</div><div style={{display:"flex",gap:10}}><button onClick={()=>setConfirmRemove(false)} disabled={removing} style={{flex:1,padding:"14px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:`1px solid ${T.border}`,cursor:"pointer"}}>Cancel</button><button disabled={removing} onClick={async()=>{setRemoving(true);try{const updated=shopConfig.staff.filter(s=>s.name!==name);await updateShop(shopConfig.id,{...shopConfig,staff:updated});if(onRemoveStaff)onRemoveStaff();}catch(e){setConfirmRemove(false);}finally{setRemoving(false);}}} style={{flex:1,padding:"14px",borderRadius:14,background:T.red,color:"#fff",fontSize:15,fontWeight:700,border:"none",cursor:"pointer"}}>{removing?"Removing…":"Remove"}</button></div></div></div>}
-  </div>;
+  </>;
 }
 
 function TaskDetail({task,staffName,allRecs,shopConfig}){
@@ -947,7 +947,7 @@ export default function App(){
   const isSubPage=!!subNav;
   const subTitle=subNav?.type==="staffDetail"?subNav.staff:(subNav?.task?.length>22?subNav.task.slice(0,21)+"…":subNav?.task);
 
-  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your shops…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
+  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your business…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
   if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}<br/><br/><span style={{fontSize:12,color:T.muted}}>Make sure AT_SHOPS is set and ?owner=your_id is in the URL.</span></div></div>;
 
   return <div style={{background:T.bg,minHeight:"100vh",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",maxWidth:480,margin:"0 auto"}}>
