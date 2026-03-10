@@ -48,20 +48,29 @@ function wkMins(recs,name,wk){return recs.filter(r=>r.staff===name&&r.week===wk&
 function bestDayFor(recs,task){const m={};recs.filter(r=>r.task===task&&r.mins>0).forEach(r=>{const d=DNAMES[new Date(r.date).getDay()];if(!m[d])m[d]=[];m[d].push(r.mins);});const s=Object.entries(m).map(e=>({day:e[0],avg:avgArr(e[1]),n:e[1].length})).filter(x=>x.n>=1).sort((a,b)=>a.avg-b.avg);return s[0]||null;}
 function taskDayTrendData(recs,task){const m={};recs.filter(r=>r.task===task&&r.mins>0).forEach(r=>{const d=DNAMES[new Date(r.date).getDay()];if(!m[d])m[d]=[];m[d].push(r.mins);});return DNAMES.slice(1,7).map(d=>({day:d,mins:m[d]?avgArr(m[d]):null,n:m[d]?m[d].length:0}));}
 
-// Anonymous benchmark — never reveals other owners' shop names or exact figures
-function anonBenchmark(allShifts,sector,ownedShopIds,period){
-  const sectorRecs=filterPeriod(allShifts.filter(r=>r.sector===sector&&r.mins>0),period);
-  const otherIds=[...new Set(sectorRecs.map(r=>r.shopId))].filter(id=>!ownedShopIds.includes(id));
-  if(otherIds.length<1)return null;
-  const otherRecs=sectorRecs.filter(r=>otherIds.includes(r.shopId));
-  const taskGroups={};otherRecs.forEach(r=>{if(!taskGroups[r.task])taskGroups[r.task]=[];taskGroups[r.task].push(r.mins);});
-  const taskAvgs={};Object.entries(taskGroups).forEach(([t,v])=>{if(v.length>=3)taskAvgs[t]=avgArr(v);});
-  const shopGroups={};otherRecs.forEach(r=>{if(!shopGroups[r.shopId])shopGroups[r.shopId]=[];shopGroups[r.shopId].push(r.mins);});
+// Anonymous benchmark — uses all shops in sector including own, compares current shop vs rest
+// Privacy: never reveals other shops' names or exact figures, only anonymous averages
+function anonBenchmark(allShifts,allShops,currentShopId,sector,period){
+  // Build sector shopId set from Shops table so we don't rely on Sector field being filled in shifts
+  const sectorShopIds=new Set(allShops.filter(s=>s.sector===sector).map(s=>s.shopId));
+  // All sector records across all time for task averages, filtered by period for totals
+  const allSectorRecs=allShifts.filter(r=>sectorShopIds.has(r.shopId)&&r.mins>0);
+  const periodSectorRecs=filterPeriod(allSectorRecs,period);
+  // Other shops = any sector shop that isn't the current one
+  const otherShopIds=[...sectorShopIds].filter(id=>id!==currentShopId);
+  if(otherShopIds.length<1)return null;
+  const otherAllRecs=allSectorRecs.filter(r=>otherShopIds.includes(r.shopId));
+  const otherPeriodRecs=periodSectorRecs.filter(r=>otherShopIds.includes(r.shopId));
+  // Task averages from ALL time (more data, more stable)
+  const taskGroups={};otherAllRecs.forEach(r=>{if(!taskGroups[r.task])taskGroups[r.task]=[];taskGroups[r.task].push(r.mins);});
+  const taskAvgs={};Object.entries(taskGroups).forEach(([t,v])=>{if(v.length>=2)taskAvgs[t]=avgArr(v);});
+  // Period totals per shop for sector average comparison
+  const shopGroups={};otherPeriodRecs.forEach(r=>{if(!shopGroups[r.shopId])shopGroups[r.shopId]=[];shopGroups[r.shopId].push(r.mins);});
   const shopTotals=Object.values(shopGroups).map(v=>v.reduce((a,b)=>a+b,0));
   const sectorAvgTotal=shopTotals.length?avgArr(shopTotals):null;
-  const submitRates={};otherRecs.forEach(r=>{if(!submitRates[r.shopId])submitRates[r.shopId]=new Set();submitRates[r.shopId].add(r.date);});
+  const submitRates={};otherPeriodRecs.forEach(r=>{if(!submitRates[r.shopId])submitRates[r.shopId]=new Set();submitRates[r.shopId].add(r.date);});
   const avgSubmitDays=Object.values(submitRates).length?avgArr(Object.values(submitRates).map(s=>s.size)):null;
-  return{taskAvgs,sectorAvgTotal,avgSubmitDays,otherShopCount:otherIds.length};
+  return{taskAvgs,sectorAvgTotal,avgSubmitDays,otherShopCount:otherShopIds.length};
 }
 
 function genAnonInsights(myRecs,benchmark,shopConfig,period){
@@ -70,9 +79,19 @@ function genAnonInsights(myRecs,benchmark,shopConfig,period){
   const pLabel={today:"today",week:"this week",month:"this month"}[period];
   const myTaskAvgs={};myRecs.filter(r=>r.mins>0).forEach(r=>{if(!myTaskAvgs[r.task])myTaskAvgs[r.task]=[];myTaskAvgs[r.task].push(r.mins);});
   let biggestWin=null,biggestFlag=null;
-  Object.entries(myTaskAvgs).forEach(([task,vals])=>{const myAvg=avgArr(vals);const sectAvg=benchmark.taskAvgs[task];if(!sectAvg||vals.length<2)return;const diff=Math.round(((myAvg-sectAvg)/sectAvg)*100);if(diff<-15&&(!biggestWin||diff<biggestWin.diff))biggestWin={task,diff,myAvg,sectAvg};if(diff>15&&(!biggestFlag||diff>biggestFlag.diff))biggestFlag={task,diff,myAvg,sectAvg};});
-  if(biggestWin)pts.push({type:"good",text:`Your team completes "${biggestWin.task}" ${Math.abs(biggestWin.diff)}% faster than others in your sector. A genuine strength.`});
+  Object.entries(myTaskAvgs).forEach(([task,vals])=>{
+    const myAvg=avgArr(vals);const sectAvg=benchmark.taskAvgs[task];
+    if(!sectAvg)return;
+    const diff=Math.round(((myAvg-sectAvg)/sectAvg)*100);
+    if(diff<-10&&(!biggestWin||diff<biggestWin.diff))biggestWin={task,diff,myAvg,sectAvg};
+    if(diff>10&&(!biggestFlag||diff>biggestFlag.diff))biggestFlag={task,diff,myAvg,sectAvg};
+  });
+  if(biggestWin)pts.push({type:"good",text:`Your business completes "${biggestWin.task}" ${Math.abs(biggestWin.diff)}% faster than others in your sector. A genuine strength.`});
   if(biggestFlag)pts.push({type:"flag",text:`"${biggestFlag.task}" is taking ${biggestFlag.diff}% longer than the sector average. Worth investigating.`});
+  if(!biggestWin&&!biggestFlag&&Object.keys(myTaskAvgs).length>0){
+    const sharedTasks=Object.keys(myTaskAvgs).filter(t=>benchmark.taskAvgs[t]);
+    if(sharedTasks.length>0)pts.push({type:"insight",text:`Your task times are closely in line with the ${shopConfig.sector} sector average across ${sharedTasks.length} shared task${sharedTasks.length>1?"s":""}. Consistent performance.`});
+  }
   if(benchmark.sectorAvgTotal){const myTotal=myRecs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);const diff=pctChg(myTotal,benchmark.sectorAvgTotal);if(diff!==null){if(diff>20)pts.push({type:"warn",text:`Your total logged time ${pLabel} is ${diff}% above the sector average. Your team may be working slower or logging more thoroughly.`});else if(diff<-20)pts.push({type:"good",text:`Your total logged time ${pLabel} is ${Math.abs(diff)}% below the sector average — your team is completing work efficiently.`});else pts.push({type:"insight",text:`Your total time ${pLabel} is in line with the ${shopConfig.sector} sector average. Consistent performance.`});}}
   const mySubmitDays=new Set(myRecs.map(r=>r.date)).size;
   if(benchmark.avgSubmitDays&&mySubmitDays>0){const diff=pctChg(mySubmitDays,benchmark.avgSubmitDays);if(diff!==null&&Math.abs(diff)>10){if(diff>0)pts.push({type:"good",text:`Your staff submit on more days than the sector average — ${diff}% above. Strong tracking habits.`});else pts.push({type:"warn",text:`Your staff are submitting on ${Math.abs(diff)}% fewer days than the sector average. Some shifts may be going unlogged.`});}}
@@ -126,16 +145,16 @@ function InsightRow({item}){const icons={good:"✅",warn:"⚠️",flag:"🚨",in
 function NoteTag({note}){if(!note)return null;return <span style={{background:T.blueLight,color:T.blue,fontSize:11,fontWeight:500,padding:"2px 8px",borderRadius:8,display:"inline-block",marginTop:4,wordBreak:"break-word"}}>💬 {note}</span>;}
 function PeriodToggle({period,setPeriod}){return <div style={{display:"flex",gap:6,padding:"12px 16px 0",overflowX:"auto"}}>{[{id:"today",label:"Today"},{id:"week",label:"This Week"},{id:"month",label:"This Month"}].map(o=><button key={o.id} onClick={()=>setPeriod(o.id)} style={{background:period===o.id?"#111":"#fff",color:period===o.id?"#fff":T.sub,border:`1px solid ${period===o.id?"#111":T.border}`,borderRadius:20,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{o.label}</button>)}</div>;}
 
-function ShopSwitcher({shops,currentShopId,onSelect,onClose}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 48px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:16}}>Your Shops</div>{shops.map((shop,i)=><button key={shop.shopId} onClick={()=>{onSelect(shop.shopId);onClose();}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:shop.shopId===currentShopId?"#111":T.bg,borderRadius:14,border:`1px solid ${shop.shopId===currentShopId?"#111":T.border}`,cursor:"pointer",marginBottom:8,textAlign:"left"}}><span style={{fontSize:26}}>{SECTOR_ICONS[shop.sector]||"🏢"}</span><div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:shop.shopId===currentShopId?"#fff":T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:shop.shopId===currentShopId?"rgba(255,255,255,0.5)":T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div></div>{shop.shopId===currentShopId&&<span style={{color:"#fff"}}>✓</span>}</button>)}</div></div>;}
+function ShopSwitcher({shops,currentShopId,onSelect,onClose}){return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 48px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:16}}>Your Businesses</div>{shops.map((shop,i)=><button key={shop.shopId} onClick={()=>{onSelect(shop.shopId);onClose();}} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"14px 16px",background:shop.shopId===currentShopId?"#111":T.bg,borderRadius:14,border:`1px solid ${shop.shopId===currentShopId?"#111":T.border}`,cursor:"pointer",marginBottom:8,textAlign:"left"}}><span style={{fontSize:26}}>{SECTOR_ICONS[shop.sector]||"🏢"}</span><div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:shop.shopId===currentShopId?"#fff":T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:shop.shopId===currentShopId?"rgba(255,255,255,0.5)":T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div></div>{shop.shopId===currentShopId&&<span style={{color:"#fff"}}>✓</span>}</button>)}</div></div>;}
 
-function HomeTab({allRecs,allShifts,shopConfig,ownedShopIds,expDays}){
+function HomeTab({allRecs,allShifts,allShops,shopConfig,currentShopId,expDays}){
   const [period,setPeriod]=useState("today");
   const recs=useMemo(()=>filterPeriod(allRecs,period),[allRecs,period]);
   const prevRecs=useMemo(()=>filterPrev(allRecs,period),[allRecs,period]);
   const staffNames=shopConfig.staff.map(s=>s.name);
   const sdm=useMemo(()=>staffDatesMap(allRecs,staffNames),[allRecs]);
   const summary=useMemo(()=>genSummary(recs,period,staffNames),[recs,period]);
-  const benchmark=useMemo(()=>anonBenchmark(allShifts,shopConfig.sector,ownedShopIds,period),[allShifts,shopConfig.sector,ownedShopIds,period]);
+  const benchmark=useMemo(()=>anonBenchmark(allShifts,allShops,currentShopId,shopConfig.sector,period),[allShifts,allShops,currentShopId,shopConfig.sector,period]);
   const anonInsights=useMemo(()=>genAnonInsights(recs,benchmark,shopConfig,period),[recs,benchmark,period]);
   const today=todayStr();
   const totalMins=recs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);
@@ -275,7 +294,10 @@ function TaskDetail({task,staffName,allRecs,shopConfig}){
 
 function ActionsTab({shopConfig,shopId}){
   const [selStaff,setSelStaff]=useState(null);const [schedule,setSchedule]=useState(null);const [loadingS,setLoadingS]=useState(false);const [saving,setSaving]=useState(false);const [saveStatus,setSaveStatus]=useState(null);const [selDay,setSelDay]=useState(ALL_DAYS[new Date().getDay()===0?6:new Date().getDay()-1]);const [adding,setAdding]=useState(false);const [newTask,setNewTask]=useState("");const [confirmTask,setConfirmTask]=useState(null);
-  useEffect(()=>{if(!selStaff)return;setLoadingS(true);fetchSchedule(shopId).then(s=>{setSchedule(s);setLoadingS(false);}).catch(()=>{setSchedule(JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)));setLoadingS(false);});},[selStaff,shopId]);
+  // Reset everything when the active shop changes
+  useEffect(()=>{setSelStaff(null);setSchedule(null);setSaveStatus(null);setAdding(false);setNewTask("");},[shopId]);
+  // Fetch schedule when a staff member is selected for the current shop
+  useEffect(()=>{if(!selStaff||!shopId)return;setLoadingS(true);setSchedule(null);fetchSchedule(shopId).then(s=>{setSchedule(s);setLoadingS(false);}).catch(()=>{setSchedule(JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)));setLoadingS(false);});},[selStaff,shopId]);
   const todayTasks=schedule&&selStaff&&schedule[selDay]?schedule[selDay][selStaff]||schedule[selDay]._all||[]:[];
   const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
   const existingId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
@@ -308,14 +330,14 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   const inp={width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:15,color:T.text,boxSizing:"border-box",marginBottom:12,outline:"none"};
   const lbl={display:"block",fontSize:13,fontWeight:700,color:T.sub,marginBottom:6};
   if(view==="list")return <div style={{padding:"16px 16px 90px"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>Manage Shops</div><button onClick={openAdd} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add Shop</button></div>
-    <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your shops.</div>
-    {shops.map((shop,i)=><Card key={shop.shopId} style={{marginBottom:10}} onPress={()=>openEdit(shop)}><div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff · {shop.shiftHours}h shifts</div><div style={{fontSize:11,color:T.blue,marginTop:2}}>Staff link: ?shop={shop.shopId}</div></div><span style={{fontSize:20,color:T.muted}}>›</span></div></Card>)}
-    {!shops.length&&<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"32px 0"}}>No shops yet. Tap + Add Shop.</p>}
-    <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>{window.location.origin}?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>Manage Businesses</div><button onClick={openAdd} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add Business</button></div>
+    <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your businesses.</div>
+    {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}} onPress={()=>openEdit(shop)}><div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff · {shop.shiftHours}h shifts</div><div style={{fontSize:11,color:T.blue,marginTop:4,wordBreak:"break-all",lineHeight:1.5}}>📲 Staff link: {staffUrl}</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div></Card>;})}
+    {!shops.length&&<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"32px 0"}}>No businesses yet. Tap + Add Business.</p>}
+    <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>https://timesheet-owner-retail-intelligence.vercel.app/?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
   </div>;
   return <div style={{padding:"16px 16px 90px"}}>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text}}>{view==="edit"?"Edit Shop":"Add New Shop"}</div></div>
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text}}>{view==="edit"?"Edit Business":"Add New Business"}</div></div>
     <label style={lbl}>Shop Name</label><input style={inp} value={fName} onChange={e=>setFName(e.target.value)} placeholder="e.g. Londis Horden"/>
     <label style={lbl}>Shop ID (used in staff URL)</label><input style={inp} value={fId} onChange={e=>setFId(e.target.value)} placeholder="e.g. londis_horden" disabled={view==="edit"}/>
     {view==="add"&&<div style={{fontSize:12,color:T.muted,marginTop:-8,marginBottom:12}}>Staff URL: yourapp.vercel.app/?shop={fId||"your_id"}</div>}
@@ -332,13 +354,13 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
 
 export default function App(){
   const ownerId=getOwnerIdFromURL();
-  const [shops,setShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
+  const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
   const [currentShopId,setCurrentShopId]=useState(null);const [myRecs,setMyRecs]=useState([]);const [allShifts,setAllShifts]=useState([]);const [dataLoading,setDataLoading]=useState(false);
   const [showSwitcher,setShowSwitcher]=useState(false);const [bottomTab,setBottomTab]=useState("home");const [subNav,setSubNav]=useState(null);
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
-  const loadShops=async()=>{if(!ownerId){setError("No owner ID in URL. Add ?owner=your_id");return[];}try{const s=await fetchOwnerShops(ownerId);setShops(s);if(!currentShopId&&s.length>0)setCurrentShopId(s[0].shopId);return s;}catch(e){setError(e.message);return[];}};
+  const loadShops=async()=>{if(!ownerId){setError("No owner ID in URL. Add ?owner=your_id");return[];}try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
   useEffect(()=>{setLoading(true);loadShops().finally(()=>setLoading(false));},[]); // eslint-disable-line
   useEffect(()=>{if(!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId]);
@@ -369,12 +391,12 @@ export default function App(){
     {dataLoading&&!myRecs.length?<div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"80px 0"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/><p style={{color:T.muted,marginTop:16,fontSize:15}}>Loading shift data…</p></div>
     :!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
     :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
-    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} shopConfig={currentShop} ownedShopIds={ownedShopIds} expDays={expDays}/>
+    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} expDays={expDays}/>
     :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop}/>
     :bottomTab==="actions"?<ActionsTab shopConfig={currentShop} shopId={currentShopId}/>
     :<ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>}
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:`1px solid ${T.border}`,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
-      {[{id:"home",icon:"🏠",label:"Home"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"},{id:"manage",icon:"⚙️",label:"Manage"}].map(tab=><button key={tab.id} onClick={()=>{setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><span style={{fontSize:20}}>{tab.icon}</span><span style={{fontSize:10,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>{bottomTab===tab.id&&!isSubPage&&<div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}</button>)}
+      {[{id:"home",icon:"🏠",label:"Home"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"},{id:"manage",icon:"⚙️",label:"Businesses"}].map(tab=><button key={tab.id} onClick={()=>{setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><span style={{fontSize:20}}>{tab.icon}</span><span style={{fontSize:10,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>{bottomTab===tab.id&&!isSubPage&&<div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}</button>)}
     </div>
     {showSwitcher&&<ShopSwitcher shops={shops} currentShopId={currentShopId} onSelect={id=>{setCurrentShopId(id);setMyRecs([]);}} onClose={()=>setShowSwitcher(false)}/>}
     <style>{"@keyframes spin{to{transform:rotate(360deg)}}*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{display:none}"}</style>
