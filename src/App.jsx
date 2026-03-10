@@ -59,22 +59,31 @@ async function saveAbsences(shopRecordId,absences){
   return r.json();
 }
 function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){
-  const baseFields={
-    "Staff Name":staff,
-    "Day":day,
-    "Tasks":JSON.stringify(tasks),
-    "Shop ID":shopId,
-    "Last Updated":new Date().toISOString().split("T")[0],
-  };
-  // Only include shift time fields if they have values, to avoid errors on missing Airtable fields
   const s=(shiftStart||"").trim();const e=(shiftEnd||"").trim();
-  if(s||e){baseFields["Shift Start"]=s;baseFields["Shift End"]=e;}
+  // Build fields - never include Shop ID on PATCH (may be linked/computed)
+  const patchFields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Last Updated":new Date().toISOString().split("T")[0]};
+  if(s||e){patchFields["Shift Start"]=s;patchFields["Shift End"]=e;}
+  const postFields={...patchFields,"Shop ID":shopId};
+
   if(existingId){
-    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:baseFields})})
-      .then(async r=>{if(!r.ok){const e=await r.json();console.error("PATCH failed:",JSON.stringify(e));throw new Error(e?.error?.message||"Save failed");}return existingId;});
+    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:patchFields})})
+      .then(async r=>{if(!r.ok){const err=await r.json();throw new Error(err?.error?.message||"Save failed");}return existingId;});
   }else{
-    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:baseFields})})
-      .then(async r=>{if(!r.ok){const e=await r.json();console.error("POST failed:",JSON.stringify(e));throw new Error(e?.error?.message||"Create failed");}return r.json();})
+    // Try POST with Shop ID first; if that field errors, retry without it
+    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:postFields})})
+      .then(async r=>{
+        if(!r.ok){
+          const err=await r.json();
+          const msg=err?.error?.message||"";
+          if(msg.includes("Shop ID")){
+            // Retry without Shop ID
+            return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:patchFields})})
+              .then(async r2=>{if(!r2.ok){const e2=await r2.json();throw new Error(e2?.error?.message||"Create failed");}return r2.json();});
+          }
+          throw new Error(msg||"Create failed");
+        }
+        return r.json();
+      })
       .then(d=>d.id);
   }
 }
