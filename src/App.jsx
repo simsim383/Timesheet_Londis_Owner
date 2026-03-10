@@ -79,7 +79,8 @@ function anonBenchmark(allShifts,allShops,currentShopId,sector,period){
   const otherTaskCounts=otherPeriodRecs.reduce((acc,r)=>{if(!acc[r.shopId])acc[r.shopId]=new Set();acc[r.shopId].add(r.task);return acc;},{});
   const avgOtherTaskVariety=Object.values(otherTaskCounts).length?avgArr(Object.values(otherTaskCounts).map(s=>s.size)):null;
   // Overall average task speed across all shared tasks (efficiency index)
-  const myAllTaskAvgs={};myRecs.filter(r=>r.mins>0).forEach(r=>{if(!myAllTaskAvgs[r.task])myAllTaskAvgs[r.task]=[];myAllTaskAvgs[r.task].push(r.mins);});
+  const myShiftRecs=allShifts.filter(r=>r.shopId===currentShopId&&r.mins>0);
+  const myAllTaskAvgs={};myShiftRecs.forEach(r=>{if(!myAllTaskAvgs[r.task])myAllTaskAvgs[r.task]=[];myAllTaskAvgs[r.task].push(r.mins);});
   const sharedTaskDiffs=Object.entries(myAllTaskAvgs).map(([task,vals])=>{const sectAvg=taskAvgs[task];if(!sectAvg)return null;return Math.round(((avgArr(vals)-sectAvg)/sectAvg)*100);}).filter(v=>v!==null);
   const overallSpeedDiff=sharedTaskDiffs.length>=2?Math.round(sharedTaskDiffs.reduce((a,b)=>a+b,0)/sharedTaskDiffs.length):null;
   return{taskAvgs,avgSubmitDays,avgOtherTaskVariety,overallSpeedDiff,sharedTaskCount:sharedTaskDiffs.length,otherShopCount:otherShopIds.length};
