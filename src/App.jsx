@@ -33,6 +33,7 @@ async function fetchSchedule(shopId,sector){const defaults=SECTOR_DEFAULTS[secto
 function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId){const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Shop ID":shopId,"Last Updated":new Date().toISOString().split("T")[0]};if(existingId){return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${existingId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Save failed");return existingId;});}else{return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})}).then(r=>{if(!r.ok)throw new Error("Create failed");return r.json();}).then(d=>d.id);}}
 async function createShop(data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:{"Shop ID":data.shopId,"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin,"Owner ID":data.ownerId,"Active":true}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
 async function updateShop(recordId,data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
+async function deleteShop(recordId){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Active":false}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
 
 const fmt=m=>{if(!m)return"0m";const h=Math.floor(m/60),mn=m%60;return h>0?(h+"h"+(mn>0?" "+mn+"m":"")):(mn+"m");};
 const avgArr=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):0;
@@ -69,13 +70,16 @@ function anonBenchmark(allShifts,allShops,currentShopId,sector,period){
   // Task averages from ALL time (more data, more stable)
   const taskGroups={};otherAllRecs.forEach(r=>{if(!taskGroups[r.task])taskGroups[r.task]=[];taskGroups[r.task].push(r.mins);});
   const taskAvgs={};Object.entries(taskGroups).forEach(([t,v])=>{if(v.length>=2)taskAvgs[t]=avgArr(v);});
-  // Period totals per shop for sector average comparison
-  const shopGroups={};otherPeriodRecs.forEach(r=>{if(!shopGroups[r.shopId])shopGroups[r.shopId]=[];shopGroups[r.shopId].push(r.mins);});
-  const shopTotals=Object.values(shopGroups).map(v=>v.reduce((a,b)=>a+b,0));
-  const sectorAvgTotal=shopTotals.length?avgArr(shopTotals):null;
   const submitRates={};otherPeriodRecs.forEach(r=>{if(!submitRates[r.shopId])submitRates[r.shopId]=new Set();submitRates[r.shopId].add(r.date);});
   const avgSubmitDays=Object.values(submitRates).length?avgArr(Object.values(submitRates).map(s=>s.size)):null;
-  return{taskAvgs,sectorAvgTotal,avgSubmitDays,otherShopCount:otherShopIds.length};
+  // Task variety — how many distinct tasks per shop vs sector average
+  const otherTaskCounts=otherPeriodRecs.reduce((acc,r)=>{if(!acc[r.shopId])acc[r.shopId]=new Set();acc[r.shopId].add(r.task);return acc;},{});
+  const avgOtherTaskVariety=Object.values(otherTaskCounts).length?avgArr(Object.values(otherTaskCounts).map(s=>s.size)):null;
+  // Overall average task speed across all shared tasks (efficiency index)
+  const myAllTaskAvgs={};myRecs.filter(r=>r.mins>0).forEach(r=>{if(!myAllTaskAvgs[r.task])myAllTaskAvgs[r.task]=[];myAllTaskAvgs[r.task].push(r.mins);});
+  const sharedTaskDiffs=Object.entries(myAllTaskAvgs).map(([task,vals])=>{const sectAvg=taskAvgs[task];if(!sectAvg)return null;return Math.round(((avgArr(vals)-sectAvg)/sectAvg)*100);}).filter(v=>v!==null);
+  const overallSpeedDiff=sharedTaskDiffs.length>=2?Math.round(sharedTaskDiffs.reduce((a,b)=>a+b,0)/sharedTaskDiffs.length):null;
+  return{taskAvgs,avgSubmitDays,avgOtherTaskVariety,overallSpeedDiff,sharedTaskCount:sharedTaskDiffs.length,otherShopCount:otherShopIds.length};
 }
 
 function genAnonInsights(myRecs,benchmark,shopConfig,period){
@@ -83,6 +87,8 @@ function genAnonInsights(myRecs,benchmark,shopConfig,period){
   const pts=[];
   const pLabel={today:"today",week:"this week",month:"this month"}[period];
   const myTaskAvgs={};myRecs.filter(r=>r.mins>0).forEach(r=>{if(!myTaskAvgs[r.task])myTaskAvgs[r.task]=[];myTaskAvgs[r.task].push(r.mins);});
+
+  // 1. Best and worst individual task vs sector
   let biggestWin=null,biggestFlag=null;
   Object.entries(myTaskAvgs).forEach(([task,vals])=>{
     const myAvg=avgArr(vals);const sectAvg=benchmark.taskAvgs[task];
@@ -91,15 +97,39 @@ function genAnonInsights(myRecs,benchmark,shopConfig,period){
     if(diff<-10&&(!biggestWin||diff<biggestWin.diff))biggestWin={task,diff,myAvg,sectAvg};
     if(diff>10&&(!biggestFlag||diff>biggestFlag.diff))biggestFlag={task,diff,myAvg,sectAvg};
   });
-  if(biggestWin)pts.push({type:"good",text:`Your business completes "${biggestWin.task}" ${Math.abs(biggestWin.diff)}% faster than others in your sector. A genuine strength.`});
-  if(biggestFlag)pts.push({type:"flag",text:`"${biggestFlag.task}" is taking ${biggestFlag.diff}% longer than the sector average. Worth investigating.`});
-  if(!biggestWin&&!biggestFlag&&Object.keys(myTaskAvgs).length>0){
-    const sharedTasks=Object.keys(myTaskAvgs).filter(t=>benchmark.taskAvgs[t]);
-    if(sharedTasks.length>0)pts.push({type:"insight",text:`Your task times are closely in line with the ${shopConfig.sector} sector average across ${sharedTasks.length} shared task${sharedTasks.length>1?"s":""}. Consistent performance.`});
+  if(biggestWin)pts.push({type:"good",text:`Your team completes "${biggestWin.task}" ${Math.abs(biggestWin.diff)}% faster than others in your sector — ${biggestWin.myAvg}m vs the ${biggestWin.sectAvg}m sector average.`});
+  if(biggestFlag)pts.push({type:"flag",text:`"${biggestFlag.task}" is taking ${biggestFlag.diff}% longer than the sector average — ${biggestFlag.myAvg}m vs ${biggestFlag.sectAvg}m. Worth investigating.`});
+
+  // 2. Overall efficiency index — average speed across all shared tasks
+  if(benchmark.overallSpeedDiff!==null&&benchmark.sharedTaskCount>=2){
+    const d=benchmark.overallSpeedDiff;
+    if(d<=-10)pts.push({type:"good",text:`Across ${benchmark.sharedTaskCount} shared tasks, your team is completing work ${Math.abs(d)}% faster than the sector average. Strong overall efficiency.`});
+    else if(d>=10)pts.push({type:"warn",text:`Across ${benchmark.sharedTaskCount} shared tasks, your team is averaging ${d}% slower than others in your sector. There may be room to improve task pacing.`});
+    else pts.push({type:"insight",text:`Across ${benchmark.sharedTaskCount} shared tasks, your overall task speed is closely in line with the ${shopConfig.sector} sector average.`});
   }
-  if(benchmark.sectorAvgTotal){const myTotal=myRecs.filter(r=>r.mins>0).reduce((a,r)=>a+r.mins,0);const diff=pctChg(myTotal,benchmark.sectorAvgTotal);if(diff!==null){if(diff>20)pts.push({type:"warn",text:`Your total logged time ${pLabel} is ${diff}% above the sector average. Your team may be working slower or logging more thoroughly.`});else if(diff<-20)pts.push({type:"good",text:`Your total logged time ${pLabel} is ${Math.abs(diff)}% below the sector average — your team is completing work efficiently.`});else pts.push({type:"insight",text:`Your total time ${pLabel} is in line with the ${shopConfig.sector} sector average. Consistent performance.`});}}
-  const mySubmitDays=new Set(myRecs.map(r=>r.date)).size;
-  if(benchmark.avgSubmitDays&&mySubmitDays>0){const diff=pctChg(mySubmitDays,benchmark.avgSubmitDays);if(diff!==null&&Math.abs(diff)>10){if(diff>0)pts.push({type:"good",text:`Your staff submit on more days than the sector average — ${diff}% above. Strong tracking habits.`});else pts.push({type:"warn",text:`Your staff are submitting on ${Math.abs(diff)}% fewer days than the sector average. Some shifts may be going unlogged.`});}}
+
+  // 3. Task variety — breadth of tasks completed
+  if(benchmark.avgOtherTaskVariety){
+    const myVariety=new Set(myRecs.filter(r=>r.mins>0).map(r=>r.task)).size;
+    const diff=pctChg(myVariety,benchmark.avgOtherTaskVariety);
+    if(diff!==null&&myVariety>0){
+      if(diff>=20)pts.push({type:"good",text:`Your team completed ${myVariety} different tasks ${pLabel} — ${diff}% more variety than the sector average. Well-rounded shift coverage.`});
+      else if(diff<=-20)pts.push({type:"insight",text:`Your team completed ${myVariety} task types ${pLabel}, which is ${Math.abs(diff)}% fewer than the sector average. Consider whether any routine tasks are going unlogged.`});
+    }
+  }
+
+  // 4. Submission consistency
+  if(benchmark.avgSubmitDays){
+    const mySubmitDays=new Set(myRecs.map(r=>r.date)).size;
+    if(mySubmitDays>0){
+      const diff=pctChg(mySubmitDays,benchmark.avgSubmitDays);
+      if(diff!==null&&Math.abs(diff)>15){
+        if(diff>0)pts.push({type:"good",text:`Your staff are submitting on more days than the sector average — ${diff}% above. Consistent logging habits.`});
+        else pts.push({type:"warn",text:`Your staff are submitting on ${Math.abs(diff)}% fewer days than the sector average. Some shifts may be going untracked.`});
+      }
+    }
+  }
+
   if(!pts.length)pts.push({type:"insight",text:`Your ${shopConfig.sector} performance is tracking closely with the sector average. Keep collecting data for deeper insights.`});
   return pts;
 }
@@ -312,11 +342,11 @@ function ActionsTab({shopConfig,shopId}){
   function addTask(t){if(!t.trim())return;if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}const nt=[...todayTasks,t];setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);setNewTask("");setAdding(false);}
   const staffIdx=selStaff?shopConfig.staff.findIndex(s=>s.name===selStaff):0;
   const staffColor=SC[staffIdx%SC.length];
-  if(!selStaff)return <div style={{padding:"16px 16px 90px"}}><div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:4}}>Actions</div><div style={{fontSize:14,color:T.sub,marginBottom:20}}>Edit each staff member's daily task schedule.</div>{shopConfig.staff.map((s,i)=><Card key={s.name} style={{marginBottom:10}} onPress={()=>setSelStaff(s.name)}><div style={{display:"flex",alignItems:"center",gap:12}}><Avatar name={s.name} size={46} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{s.name}</div><div style={{fontSize:13,color:T.muted}}>{s.shift} shift · Tap to edit schedule</div></div><span style={{fontSize:20,color:T.muted}}>›</span></div></Card>)}<div style={{marginTop:20,background:T.greenLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BBF7D0"}}><div style={{fontSize:13,fontWeight:700,color:T.green,marginBottom:4}}>✅ Airtable Sync Active</div><div style={{fontSize:13,color:T.green,lineHeight:1.6}}>Schedules save instantly. Staff see updates next time they open the app.</div></div></div>;
+  if(!selStaff)return <div style={{padding:"16px 16px 90px"}}><div style={{fontSize:20,fontWeight:800,color:T.text,marginBottom:4}}>Actions</div><div style={{fontSize:14,color:T.sub,marginBottom:20}}>Edit each staff member's daily task schedule.</div>{shopConfig.staff.map((s,i)=><Card key={s.name} style={{marginBottom:10}} onPress={()=>setSelStaff(s.name)}><div style={{display:"flex",alignItems:"center",gap:12}}><Avatar name={s.name} size={46} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{s.name}</div><div style={{fontSize:13,color:T.muted}}>{s.shift} shift · Tap to edit schedule</div></div><span style={{fontSize:20,color:T.muted}}>›</span></div></Card>)}</div>;
   return <div style={{padding:"0 16px 90px"}}>
     <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}><button onClick={()=>setSelStaff(null)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><Avatar name={selStaff} size={36} color={staffColor}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff} Schedule</div><div style={{fontSize:12,color:T.muted}}>{shopConfig.staff.find(s=>s.name===selStaff)?.shift} shift</div></div>{saving&&<span style={{fontSize:12,color:T.muted}}>Saving…</span>}{saveStatus==="ok"&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Synced</span>}{saveStatus==="err"&&<span style={{fontSize:12,color:T.red,fontWeight:700}}>⚠ Failed</span>}</div>
     <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>{ALL_DAYS.map(d=><button key={d} onClick={()=>setSelDay(d)} style={{background:selDay===d?staffColor:"#fff",color:selDay===d?"#fff":T.sub,border:`1px solid ${selDay===d?staffColor:T.border}`,borderRadius:20,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{d.slice(0,3)}</button>)}</div>
-    {loadingS?<div style={{display:"flex",alignItems:"center",gap:10,padding:"24px 0",color:T.muted,fontSize:14}}><div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${T.div}`,borderTop:`2px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/>Loading from Airtable…</div>:<>
+    {loadingS?<div style={{display:"flex",alignItems:"center",gap:10,padding:"24px 0",color:T.muted,fontSize:14}}><div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${T.div}`,borderTop:`2px solid ${T.accent}`,animation:"spin 0.8s linear infinite"}}/>Loading schedule…</div>:<>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><Lbl>{selDay} Tasks ({todayTasks.length})</Lbl><button onClick={()=>setAdding(true)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add</button></div>
       {adding&&<Card style={{marginBottom:12,border:`1px solid ${T.accent}`}}><div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {selDay}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{unusedTasks.slice(0,12).map(t=><button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>)}</div><div style={{display:"flex",gap:8}}><input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask(newTask);}} placeholder="Or type a custom task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/><button onClick={()=>addTask(newTask)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button></div><button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button></Card>}
       <Card>{todayTasks.length===0&&<p style={{color:T.muted,fontSize:14,margin:0}}>No tasks for {selDay}. Tap + Add.</p>}{todayTasks.map((task,i)=><div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><div style={{width:10,height:10,borderRadius:"50%",background:T.accent,flexShrink:0}}/><span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span><button onClick={()=>setConfirmTask(task)} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button></div>)}</Card>
@@ -327,26 +357,29 @@ function ActionsTab({shopConfig,shopId}){
 
 function ManageTab({shops,ownerId,onShopsUpdated}){
   const [view,setView]=useState("list");const [editShop,setEditShop]=useState(null);const [saving,setSaving]=useState(false);const [saveMsg,setSaveMsg]=useState(null);
+  const [confirmDelete,setConfirmDelete]=useState(null);const [deleting,setDeleting]=useState(false);
   const [fName,setFName]=useState("");const [fId,setFId]=useState("");const [fSector,setFSector]=useState("convenience");const [fHours,setFHours]=useState("6");const [fPin,setFPin]=useState("0000");const [fStaff,setFStaff]=useState([]);
   const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");
   const openEdit=shop=>{setEditShop(shop);setFName(shop.shopName);setFId(shop.shopId);setFSector(shop.sector);setFHours(String(shop.shiftHours));setFPin(shop.ownerPin||"0000");setFStaff([...shop.staff]);setView("edit");};
   const openAdd=()=>{setEditShop(null);setFName("");setFId("");setFSector("convenience");setFHours("6");setFPin("0000");setFStaff([]);setView("add");};
   const addStaff=()=>{if(!nName.trim()||nPin.length!==4)return;setFStaff(p=>[...p,{name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift}]);setNName("");setNPin("");setNShift("morning");};
   const handleSave=async()=>{if(!fName.trim()||!fId.trim())return;setSaving(true);setSaveMsg(null);try{const data={shopId:fId.trim().toLowerCase().replace(/\s+/g,"_"),shopName:fName.trim(),sector:fSector,shiftHours:parseInt(fHours)||6,staff:fStaff,ownerPin:fPin,ownerId};if(editShop)await updateShop(editShop.id,data);else await createShop(data);setSaveMsg("ok");await onShopsUpdated();setTimeout(()=>{setSaveMsg(null);setView("list");},1500);}catch(e){setSaveMsg(e.message||"Save failed");}finally{setSaving(false);}};
+  const handleDelete=async()=>{if(!confirmDelete)return;setDeleting(true);try{await deleteShop(confirmDelete.id);await onShopsUpdated();setConfirmDelete(null);setView("list");}catch(e){setSaveMsg(e.message||"Delete failed");}finally{setDeleting(false);}};
   const inp={width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:15,color:T.text,boxSizing:"border-box",marginBottom:12,outline:"none"};
   const lbl={display:"block",fontSize:13,fontWeight:700,color:T.sub,marginBottom:6};
-  if(view==="list")return <div style={{padding:"16px 16px 90px"}}>
+  return <>
+  {view==="list"?<div style={{padding:"16px 16px 90px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>Manage Businesses</div><button onClick={openAdd} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add Business</button></div>
     <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your businesses.</div>
     {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}} onPress={()=>openEdit(shop)}><div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff · {shop.shiftHours}h shifts</div><div style={{fontSize:11,color:T.blue,marginTop:4,wordBreak:"break-all",lineHeight:1.5}}>📲 Staff link: {staffUrl}</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div></Card>;})}
     {!shops.length&&<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"32px 0"}}>No businesses yet. Tap + Add Business.</p>}
     <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>https://timesheet-owner-retail-intelligence.vercel.app/?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
-  </div>;
-  return <div style={{padding:"16px 16px 90px"}}>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text}}>{view==="edit"?"Edit Business":"Add New Business"}</div></div>
-    <label style={lbl}>Shop Name</label><input style={inp} value={fName} onChange={e=>setFName(e.target.value)} placeholder="e.g. Londis Horden"/>
-    <label style={lbl}>Shop ID (used in staff URL)</label><input style={inp} value={fId} onChange={e=>setFId(e.target.value)} placeholder="e.g. londis_horden" disabled={view==="edit"}/>
-    {view==="add"&&<div style={{fontSize:12,color:T.muted,marginTop:-8,marginBottom:12}}>Staff URL: yourapp.vercel.app/?shop={fId||"your_id"}</div>}
+  </div>
+  :<div style={{padding:"16px 16px 90px"}}>
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text,flex:1}}>{view==="edit"?"Edit Business":"Add New Business"}</div>{view==="edit"&&editShop&&<button onClick={()=>setConfirmDelete(editShop)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🗑 Delete</button>}</div>
+    <label style={lbl}>Business Name</label><input style={inp} value={fName} onChange={e=>setFName(e.target.value)} placeholder="e.g. Londis Horden"/>
+    <label style={lbl}>Business ID (used in staff link)</label><input style={inp} value={fId} onChange={e=>setFId(e.target.value)} placeholder="e.g. londis_horden" disabled={view==="edit"}/>
+    {view==="add"&&fId&&<div style={{fontSize:12,color:T.blue,marginTop:-8,marginBottom:12,wordBreak:"break-all"}}>📲 Staff link: https://timesheet-staff-retail-intelligence.vercel.app/?shop={fId}</div>}
     <label style={lbl}>Sector</label><select style={inp} value={fSector} onChange={e=>setFSector(e.target.value)}><option value="convenience">🏪 Convenience Store</option><option value="gym">🏋️ Gym / Fitness</option><option value="cafe">☕ Cafe / Coffee Shop</option></select>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><div><label style={lbl}>Shift Hours</label><input style={inp} type="number" value={fHours} onChange={e=>setFHours(e.target.value)} min="1" max="12"/></div><div><label style={lbl}>Owner PIN</label><input style={inp} type="text" maxLength={4} value={fPin} onChange={e=>setFPin(e.target.value)} placeholder="0000"/></div></div>
     <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:12,marginTop:4}}>Staff Members</div>
@@ -354,8 +387,21 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     <div style={{background:T.bg,borderRadius:12,padding:"14px",marginBottom:16,border:`1px dashed ${T.border}`}}><div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:10}}>Add Staff Member</div><input style={{...inp,marginBottom:8}} value={nName} onChange={e=>setNName(e.target.value)} placeholder="Name"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><input style={{...inp,marginBottom:8}} type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value)} placeholder="4-digit PIN"/><select style={{...inp,marginBottom:8}} value={nShift} onChange={e=>setNShift(e.target.value)}><option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option></select></div><button onClick={addStaff} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>+ Add to Staff List</button></div>
     {saveMsg==="ok"&&<div style={{background:T.greenLight,color:T.green,borderRadius:10,padding:"12px 16px",fontSize:14,fontWeight:700,marginBottom:12}}>✓ Saved successfully!</div>}
     {saveMsg&&saveMsg!=="ok"&&<div style={{background:T.redLight,color:T.red,borderRadius:10,padding:"12px 16px",fontSize:14,marginBottom:12}}>⚠️ {saveMsg}</div>}
-    <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Shop"}</button>
-  </div>;
+    <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
+  </div>}
+  {confirmDelete&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}} onClick={()=>!deleting&&setConfirmDelete(null)}>
+    <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:20,padding:"28px 24px",width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+      <div style={{width:52,height:52,borderRadius:"50%",background:T.redLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 16px"}}>🗑</div>
+      <div style={{fontSize:19,fontWeight:800,color:T.text,textAlign:"center",marginBottom:8}}>Remove Business?</div>
+      <div style={{fontSize:14,color:T.sub,textAlign:"center",lineHeight:1.7,marginBottom:8}}>You're about to remove <span style={{fontWeight:700,color:T.text}}>{confirmDelete.shopName}</span> from your dashboard.</div>
+      <div style={{fontSize:13,color:T.muted,textAlign:"center",lineHeight:1.6,marginBottom:24}}>Staff will lose access to their timesheet link. All historical data will be retained.</div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>setConfirmDelete(null)} disabled={deleting} style={{flex:1,padding:"14px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:`1px solid ${T.border}`,cursor:"pointer"}}>Cancel</button>
+        <button onClick={handleDelete} disabled={deleting} style={{flex:1,padding:"14px",borderRadius:14,background:T.red,color:"#fff",fontSize:15,fontWeight:700,border:"none",cursor:"pointer"}}>{deleting?"Removing…":"Remove"}</button>
+      </div>
+    </div>
+  </div>}
+  </>;
 }
 
 export default function App(){
