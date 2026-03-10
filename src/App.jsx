@@ -638,7 +638,7 @@ function TaskDetail({task,staffName,allRecs,shopConfig}){
 function ActionsTab({shopConfig,shopId}){
   const [selStaff,setSelStaff]=useState(null);const [schedule,setSchedule]=useState(null);const [loadingS,setLoadingS]=useState(false);const [saving,setSaving]=useState(false);const [saveStatus,setSaveStatus]=useState(null);const [selDay,setSelDay]=useState(ALL_DAYS[new Date().getDay()===0?6:new Date().getDay()-1]);const [adding,setAdding]=useState(false);const [newTask,setNewTask]=useState("");const [confirmTask,setConfirmTask]=useState(null);
   const [activeSection,setActiveSection]=useState("schedule"); // "schedule" | "absences"
-  const [absences,setAbsences]=useState({});const [absFrom,setAbsFrom]=useState("");const [absTo,setAbsTo]=useState("");const [absType,setAbsType]=useState("holiday");const [savingAbs,setSavingAbs]=useState(false);
+  const [absences,setAbsences]=useState({});const [absFrom,setAbsFrom]=useState("");const [absTo,setAbsTo]=useState("");const [absComment,setAbsComment]=useState("");const [savingAbs,setSavingAbs]=useState(false);
   const [shiftStart,setShiftStart]=useState("");const [shiftEnd,setShiftEnd]=useState("");
   // Reset everything when the active shop changes
   useEffect(()=>{setSelStaff(null);setSchedule(null);setSaveStatus(null);setAdding(false);setNewTask("");setActiveSection("schedule");},[shopId]);
@@ -652,7 +652,26 @@ function ActionsTab({shopConfig,shopId}){
   const todayTasks=schedule&&selStaff&&schedule[selDay]?(schedule[selDay][selStaff]!==undefined?schedule[selDay][selStaff]:schedule[selDay]._all||[]):[];
   const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
   const existingId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
-  function persistChange(newTasks,start,end){const s=start!==undefined?start:shiftStart;const e=end!==undefined?end:shiftEnd;setSaving(true);setSaveStatus(null);saveScheduleToAirtable(schedule,shopId,selDay,selStaff,newTasks,existingId,s,e).then(newId=>{setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay]._ids)u[selDay]._ids={};u[selDay]._ids[selStaff]=newId;if(!u[selDay]._times)u[selDay]._times={};if(s||e)u[selDay]._times[selStaff]={start:s,end:e};return u;});setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);}).catch(()=>{setSaveStatus("err");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);});}
+  function persistChange(newTasks,start,end){
+    const s=start!==undefined?start:shiftStart;
+    const e=end!==undefined?end:shiftEnd;
+    // get the most current existingId from schedule state
+    const currId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
+    setSaving(true);setSaveStatus(null);
+    saveScheduleToAirtable(schedule,shopId,selDay,selStaff,newTasks,currId,s,e).then(newId=>{
+      setSchedule(prev=>{
+        const u=JSON.parse(JSON.stringify(prev));
+        if(!u[selDay])u[selDay]={};
+        if(!u[selDay]._ids)u[selDay]._ids={};
+        u[selDay]._ids[selStaff]=newId;
+        u[selDay][selStaff]=newTasks;
+        if(!u[selDay]._times)u[selDay]._times={};
+        if(s||e)u[selDay]._times[selStaff]={start:s,end:e};
+        return u;
+      });
+      setSaveStatus("ok");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);
+    }).catch(()=>{setSaveStatus("err");setSaving(false);setTimeout(()=>setSaveStatus(null),2500);});
+  }
   function removeTask(task){const nt=todayTasks.filter(t=>t!==task);setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);}
   function addTask(t){if(!t.trim())return;if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}const nt=[...todayTasks,t];setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});persistChange(nt);setNewTask("");setAdding(false);}
   const addAbsence=async()=>{
@@ -661,23 +680,23 @@ function ActionsTab({shopConfig,shopId}){
     const dates=[];let d=new Date(absFrom+"T12:00:00");const end=new Date(endDate+"T12:00:00");
     while(d<=end){dates.push(d.toISOString().split("T")[0]);d.setDate(d.getDate()+1);}
     const existing=(absences[selStaff]||[]).filter(a=>!dates.includes(a.date));
-    const newEntries=dates.map(date=>({date,type:absType}));
+    const newEntries=dates.map(date=>({date,type:"absent",comment:absComment.trim()}));
     const updated={...absences,[selStaff]:[...existing,...newEntries]};
-    try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);setAbsFrom("");setAbsTo("");}catch(e){}finally{setSavingAbs(false);};
+    try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);setAbsFrom("");setAbsTo("");setAbsComment("");}catch(e){}finally{setSavingAbs(false);};
   };
   const removeAbsence=async(date)=>{const staffAbs=(absences[selStaff]||[]).filter(a=>a.date!==date);const updated={...absences,[selStaff]:staffAbs};try{await saveAbsences(shopConfig.id,updated);setAbsences(updated);}catch(e){}};
   const staffAbs=(absences[selStaff]||[]).sort((a,b)=>b.date.localeCompare(a.date));
   const staffIdx=selStaff?shopConfig.staff.findIndex(s=>s.name===selStaff):0;
   const staffColor=SC[staffIdx%SC.length];
   const absTypeColors={absent:{bg:T.redLight,col:T.red,label:"Absent"},holiday:{bg:"#EFF6FF",col:T.blue,label:"Holiday"},sick:{bg:"#FFF7ED",col:T.amber,label:"Sick"},late:{bg:"#F5F3FF",col:T.purple,label:"Late"}};
-  // Group consecutive same-type absence ranges for display
+  // Group consecutive absence ranges for display
   const groupedAbs=useMemo(()=>{
     if(!staffAbs.length)return[];
     const sorted=[...staffAbs].sort((a,b)=>a.date.localeCompare(b.date));
     const groups=[];let g=null;
     sorted.forEach(a=>{
-      if(g&&g.type===a.type){const prev=new Date(g.to+"T12:00:00");prev.setDate(prev.getDate()+1);if(prev.toISOString().split("T")[0]===a.date){g.to=a.date;g.dates.push(a.date);return;}}
-      g={type:a.type,from:a.date,to:a.date,dates:[a.date]};groups.push(g);
+      if(g&&g.comment===(a.comment||"")){const prev=new Date(g.to+"T12:00:00");prev.setDate(prev.getDate()+1);if(prev.toISOString().split("T")[0]===a.date){g.to=a.date;g.dates.push(a.date);return;}}
+      g={type:"absent",comment:a.comment||"",from:a.date,to:a.date,dates:[a.date]};groups.push(g);
     });
     return groups.sort((a,b)=>b.from.localeCompare(a.from));
   },[staffAbs]);
@@ -687,24 +706,17 @@ function ActionsTab({shopConfig,shopId}){
     <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}><button onClick={()=>setSelStaff(null)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><Avatar name={selStaff} size={36} color={staffColor}/><div style={{flex:1}}><div style={{fontSize:16,fontWeight:800,color:T.text}}>{selStaff}</div><div style={{fontSize:12,color:T.muted}}>{shopConfig.staff.find(s=>s.name===selStaff)?.shift} shift</div></div>{saving&&<span style={{fontSize:12,color:T.muted}}>Saving…</span>}{saveStatus==="ok"&&<span style={{fontSize:12,color:T.green,fontWeight:700}}>✓ Synced</span>}{saveStatus==="err"&&<span style={{fontSize:12,color:T.red,fontWeight:700}}>⚠ Failed</span>}</div>
     <div style={{display:"flex",gap:8,marginBottom:16}}><button onClick={()=>setActiveSection("schedule")} style={{flex:1,background:activeSection==="schedule"?staffColor:T.bg,color:activeSection==="schedule"?"#fff":T.sub,border:`1px solid ${activeSection==="schedule"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋 Schedule</button><button onClick={()=>setActiveSection("absences")} style={{flex:1,background:activeSection==="absences"?staffColor:T.bg,color:activeSection==="absences"?"#fff":T.sub,border:`1px solid ${activeSection==="absences"?staffColor:T.border}`,borderRadius:10,padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📅 Absences {staffAbs.length>0&&`(${groupedAbs.length})`}</button></div>
     {activeSection==="absences"&&<>
-      <Lbl>Log Period</Lbl>
+      <Lbl>Log Absence</Lbl>
       <Card style={{marginBottom:14}}>
-        <div style={{marginBottom:10}}>
-          <div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>Type</div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-            {Object.entries(absTypeColors).map(([k,v])=><button key={k} onClick={()=>setAbsType(k)} style={{background:absType===k?v.col:T.bg,color:absType===k?"#fff":v.col,border:`1.5px solid ${v.col}`,borderRadius:20,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>{v.label}</button>)}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-            <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>From</div><input type="date" value={absFrom} onChange={e=>setAbsFrom(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
-            <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>To <span style={{fontWeight:400,color:T.muted}}>(optional)</span></div><input type="date" value={absTo} min={absFrom} onChange={e=>setAbsTo(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
-          </div>
-          {absFrom&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>
-            {absTo&&absTo>absFrom?`${Math.round((new Date(absTo+"T12:00:00")-new Date(absFrom+"T12:00:00"))/(1000*60*60*24))+1} days`:"Single day"}
-          </div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+          <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>From</div><input type="date" value={absFrom} onChange={e=>setAbsFrom(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+          <div><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>To <span style={{fontWeight:400,color:T.muted}}>(optional)</span></div><input type="date" value={absTo} min={absFrom} onChange={e=>setAbsTo(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
         </div>
-        <button onClick={addAbsence} disabled={!absFrom||savingAbs} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"11px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:!absFrom||savingAbs?0.5:1}}>{savingAbs?"Saving…":"+ Log Period"}</button>
+        {absFrom&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>{absTo&&absTo>absFrom?`${Math.round((new Date(absTo+"T12:00:00")-new Date(absFrom+"T12:00:00"))/(1000*60*60*24))+1} days`:"Single day"}</div>}
+        <div style={{marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:6}}>Comment <span style={{fontWeight:400,color:T.muted}}>(optional)</span></div><input value={absComment} onChange={e=>setAbsComment(e.target.value)} placeholder="e.g. Doctor's appointment, Holiday, etc." style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"}}/></div>
+        <button onClick={addAbsence} disabled={!absFrom||savingAbs} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"11px 18px",fontSize:14,fontWeight:700,cursor:"pointer",width:"100%",opacity:!absFrom||savingAbs?0.5:1}}>{savingAbs?"Saving…":"+ Log Absence"}</button>
       </Card>
-      {groupedAbs.length>0?<><Lbl>Record ({staffAbs.length} days)</Lbl><Card>{groupedAbs.map((g,i)=>{const tc=absTypeColors[g.type]||absTypeColors.absent;const isSingle=g.from===g.to;return <div key={g.from+g.type} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:tc.bg,color:tc.col,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>{tc.label}</span><div style={{flex:1}}>{isSingle?<div style={{fontSize:13,color:T.sub}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>:<><div style={{fontSize:13,fontWeight:700,color:T.text}}>{g.dates.length} days</div><div style={{fontSize:11,color:T.muted}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(g.to+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div></>}</div><button onClick={()=>g.dates.forEach(d=>removeAbsence(d))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
+      {groupedAbs.length>0?<><Lbl>Record ({staffAbs.length} days)</Lbl><Card>{groupedAbs.map((g,i)=>{const isSingle=g.from===g.to;return <div key={g.from} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><span style={{background:T.redLight,color:T.red,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:20,flexShrink:0}}>Absent</span><div style={{flex:1}}>{isSingle?<div style={{fontSize:13,color:T.sub}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</div>:<><div style={{fontSize:13,fontWeight:700,color:T.text}}>{g.dates.length} days</div><div style={{fontSize:11,color:T.muted}}>{new Date(g.from+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(g.to+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}</div></>}{g.comment&&<div style={{fontSize:11,color:T.muted,marginTop:2,fontStyle:"italic"}}>"{g.comment}"</div>}</div><button onClick={()=>g.dates.forEach(d=>removeAbsence(d))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>;})}
       </Card></>:<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"24px 0"}}>No absences logged for {selStaff}.</p>}
     </>}
     {activeSection==="schedule"&&<>
