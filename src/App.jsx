@@ -69,6 +69,9 @@ async function saveAbsences(shopId,absencesObj){await sbDelete("absences",`shop_
 async function createShop(data){const rows=await sbPost("shops",{id:data.shopId,name:data.shopName,sector:data.sector,owner_id:data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),active:true,staff:data.staff||[],staff_notes:{}});return rows[0];}
 async function updateShop(shopId,data){const rows=await sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{name:data.shopName,sector:data.sector,owner_id:data.ownerId||data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),staff:data.staff||[]});return rows[0];}
 async function deleteShop(shopId){return sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{active:false});}
+async function fetchCustomTasks(shopId){try{const rows=await sbGet("custom_tasks",`shop_id=eq.${encodeURIComponent(shopId)}&order=category,name`);return rows;}catch(e){return[];}}
+async function saveCustomTask(shopId,name,category){return sbPost("custom_tasks",{shop_id:shopId,name:name.trim(),category});}
+async function deleteCustomTask(id){return sbDelete("custom_tasks",`id=eq.${id}`);}
 
 const fmt=m=>{if(!m)return"0m";const h=Math.floor(m/60),mn=m%60;return h>0?(h+"h"+(mn>0?" "+mn+"m":"")):(mn+"m");};
 const avgArr=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):0;
@@ -669,11 +672,16 @@ function TaskDetail({task,staffName,allRecs,shopConfig}){
 
 function ActionsTab({shopConfig,shopId}){
   const [selStaff,setSelStaff]=useState(null);const [schedule,setSchedule]=useState(null);const [loadingS,setLoadingS]=useState(false);const [saving,setSaving]=useState(false);const [saveStatus,setSaveStatus]=useState(null);const [selDay,setSelDay]=useState(ALL_DAYS[new Date().getDay()===0?6:new Date().getDay()-1]);const [adding,setAdding]=useState(false);const [newTask,setNewTask]=useState("");const [confirmTask,setConfirmTask]=useState(null);
+  const [customTasks,setCustomTasks]=useState([]);const [savingCustom,setSavingCustom]=useState(false);
+  // permanence modal state — shown when a typed custom task is added
+  const [permanenceTask,setPermanenceTask]=useState(null); // {name, addToSchedule:bool}
+  const [permanenceCat,setPermanenceCat]=useState("Other");
   const [activeSection,setActiveSection]=useState("schedule"); // "schedule" | "absences"
   const [absences,setAbsences]=useState({});const [absFrom,setAbsFrom]=useState("");const [absTo,setAbsTo]=useState("");const [absComment,setAbsComment]=useState("");const [savingAbs,setSavingAbs]=useState(false);
   const [shiftStart,setShiftStart]=useState("");const [shiftEnd,setShiftEnd]=useState("");
   // Reset everything when the active shop changes
   useEffect(()=>{setSelStaff(null);setSchedule(null);setSaveStatus(null);setAdding(false);setNewTask("");setActiveSection("schedule");},[shopId]);
+  useEffect(()=>{if(!shopId)return;fetchCustomTasks(shopId).then(setCustomTasks).catch(()=>{});},[shopId]);
   // Load absences when shop loads
   useEffect(()=>{if(shopConfig?.id)fetchAbsences(shopConfig.id).then(setAbsences).catch(()=>{});},[shopConfig?.id]);
   // Fetch schedule when a staff member is selected for the current shop
@@ -682,9 +690,14 @@ function ActionsTab({shopConfig,shopId}){
   useEffect(()=>{if(!schedule||!selStaff)return;const t=schedule[selDay]?._times?.[selStaff];setShiftStart(t?.start||"");setShiftEnd(t?.end||"");},[schedule,selDay,selStaff]);
   // Staff-specific tasks first, then sector default for the day, then empty
   const todayTasks=schedule&&selStaff&&schedule[selDay]?(schedule[selDay][selStaff]!==undefined?schedule[selDay][selStaff]:schedule[selDay]._all||[]):[];
-  const unusedTasks=TASK_POOL.filter(t=>!todayTasks.includes(t));
+  // Merge built-in pool with this shop's saved custom tasks
+  const allAvailableTasks=[...new Set([...TASK_POOL,...customTasks.map(t=>t.name)])];
+  const unusedTasks=allAvailableTasks.filter(t=>!todayTasks.includes(t));
   const existingId=schedule&&schedule[selDay]&&schedule[selDay]._ids?schedule[selDay]._ids[selStaff]||null:null;
   const [saveError,setSaveError]=useState(null);
+  // Categories for this sector, used in the permanence modal
+  const SECTOR_CATS={convenience:["Admin & Ops","Stacking","Cleaning","Checks","Customer Service","Other"],gym:["Equipment","Cleaning","Classes","Reception","Stock","Other"],cafe:["Opening","Drinks","Cleaning","Stock","Other"],bar:["Bar","Cellar","Cleaning","Stock","Other"],restaurant:["Kitchen","Front of House","Cleaning","Stock","Other"],hotel:["Rooms","Reception","Cleaning","Stock","Other"]};
+  const sectorCats=SECTOR_CATS[shopConfig?.sector||"convenience"]||SECTOR_CATS.convenience;
   function persistChange(newTasks,start,end,forceCurrId){
     const s=start!==undefined?start:shiftStart;
     const e=end!==undefined?end:shiftEnd;
@@ -710,8 +723,8 @@ function ActionsTab({shopConfig,shopId}){
     setSchedule(prev=>{const u=JSON.parse(JSON.stringify(prev));if(!u[selDay])u[selDay]={};u[selDay][selStaff]=nt;return u;});
     persistChange(nt,undefined,undefined,currId);
   }
-  function addTask(t){
-    if(!t.trim())return;
+  function addTaskToSchedule(t){
+    if(!t||!t.trim())return;
     if(todayTasks.includes(t)){setNewTask("");setAdding(false);return;}
     const nt=[...todayTasks,t];
     const currId=existingId;
@@ -719,6 +732,32 @@ function ActionsTab({shopConfig,shopId}){
     persistChange(nt,undefined,undefined,currId);
     setNewTask("");setAdding(false);
   }
+  function addTask(t){
+    if(!t||!t.trim())return;
+    // If it's a new task not in the built-in pool and not already saved as custom, show permanence modal
+    const isKnown=TASK_POOL.includes(t)||customTasks.some(c=>c.name===t);
+    if(!isKnown){
+      // Queue the task — user decides one-off or permanent
+      setPermanenceTask(t);setPermanenceCat(sectorCats[0]||"Other");
+    }else{
+      addTaskToSchedule(t);
+    }
+  }
+  const confirmPermanence=async(permanent)=>{
+    const t=permanenceTask;
+    if(!t){setPermanenceTask(null);return;}
+    if(permanent){
+      setSavingCustom(true);
+      try{
+        await saveCustomTask(shopId,t,permanenceCat);
+        const updated=await fetchCustomTasks(shopId);
+        setCustomTasks(updated);
+      }catch(e){console.warn("Custom task save failed",e);}
+      finally{setSavingCustom(false);}
+    }
+    addTaskToSchedule(t);
+    setPermanenceTask(null);
+  };
   const [absError,setAbsError]=useState(null);
   const [confirmAbs,setConfirmAbs]=useState(null); // group to confirm removal
   const addAbsence=async()=>{
@@ -792,10 +831,32 @@ function ActionsTab({shopConfig,shopId}){
         <button onClick={()=>{const currId=existingId;persistChange(todayTasks,shiftStart,shiftEnd,currId);}} disabled={saving} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>💾 Save Times</button>
         {shiftStart&&shiftEnd&&<span style={{fontSize:12,color:T.muted,marginLeft:10}}>Staff will see {shiftStart} – {shiftEnd}</span>}
       </Card>
-      {adding&&<Card style={{marginBottom:12,border:`1px solid ${T.accent}`}}><div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {selDay}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{unusedTasks.slice(0,12).map(t=><button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>)}</div><div style={{display:"flex",gap:8}}><input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask(newTask);}} placeholder="Or type a custom task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/><button onClick={()=>addTask(newTask)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button></div><button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button></Card>}
+      {adding&&<Card style={{marginBottom:12,border:`1px solid ${T.accent}`}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Add task for {selDay}</div>
+        {customTasks.length>0&&<><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Your saved tasks</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{customTasks.filter(t=>!todayTasks.includes(t.name)).map(t=><button key={t.id} onClick={()=>addTaskToSchedule(t.name)} style={{background:T.accentLight,border:`1px solid ${T.accent}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:700,color:T.accent,cursor:"pointer"}}>{t.name}</button>)}</div></>}
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Common tasks</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{unusedTasks.filter(t=>!customTasks.some(c=>c.name===t)).slice(0,12).map(t=><button key={t} onClick={()=>addTask(t)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,color:T.sub,cursor:"pointer"}}>{t}</button>)}</div>
+        <div style={{display:"flex",gap:8}}><input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTask(newTask);}} placeholder="Type a new task…" style={{flex:1,padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text}}/><button onClick={()=>addTask(newTask)} disabled={!newTask.trim()} style={{background:newTask.trim()?T.accent:"#9ca3af",color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button></div>
+        <button onClick={()=>setAdding(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",marginTop:8,padding:0}}>Cancel</button>
+      </Card>}
       <Card>{todayTasks.length===0&&<p style={{color:T.muted,fontSize:14,margin:0}}>No tasks for {selDay}. Tap + Add.</p>}{todayTasks.map((task,i)=><div key={task} style={{display:"flex",alignItems:"center",gap:10,padding:"13px 0",borderTop:i===0?"none":`1px solid ${T.div}`}}><div style={{width:10,height:10,borderRadius:"50%",background:T.accent,flexShrink:0}}/><span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{task}</span><button onClick={()=>setConfirmTask(task)} disabled={saving} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:saving?0.5:1}}>Remove</button></div>)}</Card>
     </>}
     {confirmTask&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:200}} onClick={()=>setConfirmTask(null)}><div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 40px",width:"100%",maxWidth:480,margin:"0 auto"}}><div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/><div style={{fontSize:17,fontWeight:800,color:T.text,marginBottom:8,textAlign:"center"}}>Remove Task?</div><div style={{fontSize:14,color:T.sub,textAlign:"center",marginBottom:24,lineHeight:1.6}}>Remove "{confirmTask}" from {selStaff}'s {selDay} schedule?</div><div style={{display:"flex",gap:10}}><button onClick={()=>setConfirmTask(null)} style={{flex:1,padding:"14px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:`1px solid ${T.border}`,cursor:"pointer"}}>Cancel</button><button onClick={()=>{removeTask(confirmTask);setConfirmTask(null);}} style={{flex:1,padding:"14px",borderRadius:14,background:T.red,color:"#fff",fontSize:15,fontWeight:700,border:"none",cursor:"pointer"}}>Remove</button></div></div></div>}
+    {/* ── Permanence modal — shown when a new custom task is typed ── */}
+    {permanenceTask&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"flex-end",zIndex:300}}><div style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"28px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto"}}>
+      <div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 20px"}}/>
+      <div style={{fontSize:18,fontWeight:900,color:T.text,marginBottom:4,textAlign:"center"}}>"{permanenceTask}"</div>
+      <div style={{fontSize:14,color:T.sub,textAlign:"center",marginBottom:24,lineHeight:1.6}}>Is this a one-off task, or should it be saved to your task list so staff can log it any week?</div>
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.sub,marginBottom:8}}>Category (if saving permanently)</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{sectorCats.map(cat=><button key={cat} onClick={()=>setPermanenceCat(cat)} style={{padding:"7px 14px",borderRadius:20,border:`1.5px solid ${permanenceCat===cat?T.accent:T.border}`,background:permanenceCat===cat?T.accentLight:"#fff",color:permanenceCat===cat?T.accent:T.sub,fontSize:13,fontWeight:700,cursor:"pointer"}}>{cat}</button>)}</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <button onClick={()=>confirmPermanence(true)} disabled={savingCustom} style={{padding:"16px",borderRadius:14,background:T.accent,color:"#fff",fontSize:15,fontWeight:800,border:"none",cursor:"pointer",opacity:savingCustom?0.6:1}}>{savingCustom?"Saving…":"💾 Save permanently + add to today"}</button>
+        <button onClick={()=>confirmPermanence(false)} style={{padding:"16px",borderRadius:14,background:T.bg,color:T.sub,fontSize:15,fontWeight:700,border:`1px solid ${T.border}`,cursor:"pointer"}}>One-off — just add to today</button>
+        <button onClick={()=>setPermanenceTask(null)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",padding:4}}>Cancel</button>
+      </div>
+    </div></div>}
     </>}
   </div>;
 }
@@ -804,6 +865,9 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   const [view,setView]=useState("list");const [editShop,setEditShop]=useState(null);const [saving,setSaving]=useState(false);const [saveMsg,setSaveMsg]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null);const [deleting,setDeleting]=useState(false);
   const [fName,setFName]=useState("");const [fId,setFId]=useState("");const [fSector,setFSector]=useState("convenience");const [fHours,setFHours]=useState("6");const [fPin,setFPin]=useState("0000");const [fStaff,setFStaff]=useState([]);
+  const [managingTasksFor,setManagingTasksFor]=useState(null); // shopId
+  const [shopCustomTasks,setShopCustomTasks]=useState([]);const [loadingCT,setLoadingCT]=useState(false);const [deletingCT,setDeletingCT]=useState(null);
+  const openTaskManager=async(shop)=>{setManagingTasksFor(shop);setLoadingCT(true);try{const t=await fetchCustomTasks(shop.shopId);setShopCustomTasks(t);}catch(e){}finally{setLoadingCT(false);}};
   const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");const [nHours,setNHours]=useState("6");
   const openEdit=shop=>{setEditShop(shop);setFName(shop.shopName);setFId(shop.shopId);setFSector(shop.sector);setFHours(String(shop.shiftHours));setFPin(shop.ownerPin||"0000");setFStaff([...shop.staff]);setView("edit");};
   const openAdd=()=>{setEditShop(null);setFName("");setFId("");setFSector("convenience");setFHours("6");setFPin("0000");setFStaff([]);setView("add");};
@@ -816,7 +880,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   {view==="list"?<div style={{padding:"16px 16px 90px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>Manage Businesses</div><button onClick={openAdd} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add Business</button></div>
     <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your businesses.</div>
-    {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}} onPress={()=>openEdit(shop)}><div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div><div style={{fontSize:11,color:T.blue,marginTop:4,wordBreak:"break-all",lineHeight:1.5}}>📲 Staff link: {staffUrl}</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div></Card>;})}
+    {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>openEdit(shop)}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div><div style={{fontSize:11,color:T.blue,marginTop:4,wordBreak:"break-all",lineHeight:1.5}}>📲 Staff link: {staffUrl}</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div><button onClick={()=>openTaskManager(shop)} style={{marginTop:10,width:"100%",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,color:T.sub,cursor:"pointer",textAlign:"left"}}>📋 Manage saved tasks for {shop.shopName}</button></Card>;})}
     {!shops.length&&<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"32px 0"}}>No businesses yet. Tap + Add Business.</p>}
     <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>https://timesheet-owner-retail-intelligence.vercel.app/?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
   </div>
@@ -843,6 +907,22 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     {saveMsg==="ok"&&<div style={{background:T.greenLight,color:T.green,borderRadius:10,padding:"12px 16px",fontSize:14,fontWeight:700,marginBottom:12}}>✓ Saved successfully!</div>}
     {saveMsg&&saveMsg!=="ok"&&<div style={{background:T.redLight,color:T.red,borderRadius:10,padding:"12px 16px",fontSize:14,marginBottom:12}}>⚠️ {saveMsg}</div>}
     <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
+  </div>}
+  {managingTasksFor&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:300}} onClick={()=>setManagingTasksFor(null)}>
+    <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"80vh",overflowY:"auto"}}>
+      <div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 16px"}}/>
+      <div style={{fontSize:17,fontWeight:800,color:T.text,marginBottom:4}}>📋 Saved Tasks</div>
+      <div style={{fontSize:13,color:T.sub,marginBottom:20,lineHeight:1.6}}>{managingTasksFor.shopName} — tasks your staff can log any week. Add via Actions tab when scheduling.</div>
+      {loadingCT?<div style={{color:T.muted,fontSize:14,textAlign:"center",padding:"24px 0"}}>Loading…</div>:shopCustomTasks.length===0?<div style={{color:T.muted,fontSize:14,textAlign:"center",padding:"24px 0"}}>No saved tasks yet. When you add a new task in the Actions tab and choose "Save permanently", it will appear here.</div>:
+      <div>{Object.entries(shopCustomTasks.reduce((acc,t)=>{if(!acc[t.category])acc[t.category]=[];acc[t.category].push(t);return acc;},{})).map(([cat,tasks])=><div key={cat} style={{marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>{cat}</div>
+        {tasks.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.bg,borderRadius:10,marginBottom:6}}>
+          <span style={{flex:1,fontSize:14,fontWeight:600,color:T.text}}>{t.name}</span>
+          <button onClick={async()=>{setDeletingCT(t.id);try{await deleteCustomTask(t.id);setShopCustomTasks(p=>p.filter(x=>x.id!==t.id));}catch(e){}finally{setDeletingCT(null);}}} disabled={deletingCT===t.id} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:deletingCT===t.id?0.5:1}}>{deletingCT===t.id?"…":"Remove"}</button>
+        </div>)}
+      </div>)}</div>}
+      <button onClick={()=>setManagingTasksFor(null)} style={{marginTop:8,width:"100%",background:"#111",color:"#fff",border:"none",borderRadius:12,padding:"14px",fontSize:15,fontWeight:700,cursor:"pointer"}}>Done</button>
+    </div>
   </div>}
   {confirmDelete&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}} onClick={()=>!deleting&&setConfirmDelete(null)}>
     <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:20,padding:"28px 24px",width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
