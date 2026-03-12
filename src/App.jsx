@@ -16,6 +16,55 @@ async function sbPost(t,b){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:
 async function sbPatch(t,p,b){const r=await fetch(`${SB_URL}/rest/v1/${t}?${p}`,{method:"PATCH",headers:{...SB_HDR,"Prefer":"return=representation"},body:JSON.stringify(b)});if(!r.ok){const e=await r.json();throw new Error(e?.message||`PATCH ${t} failed`);}return r.json();}
 async function sbDelete(t,p){const r=await fetch(`${SB_URL}/rest/v1/${t}?${p}`,{method:"DELETE",headers:SB_HDR});if(!r.ok){const e=await r.json();throw new Error(e?.message||`DELETE ${t} failed`);}return r.json();}
 
+// Task categories mirrored from staff app — used to seed the category editor
+const SECTOR_TASK_CATEGORIES_OWNER={
+  convenience:[
+    {category:"Customer Service",emoji:"🛎️",items:["Serving"]},
+    {category:"Stacking",emoji:"📦",items:["Crisp Stacking","Pop Stacking","Beers Stacking","Wine Stacking","Dog Food Stacking","Fridge Stacking","Freezer Stacking","Grocery Stacking","Cards Stacking","Chocolate/Sweets Stacking","Mix Ups","Cigarette/Vape Stacking","Spirits Stacking"]},
+    {category:"Checks",emoji:"✅",items:["Fridge Date Check / Temp Check","Product Date Checks"]},
+    {category:"Cleaning",emoji:"🧹",items:["Fridges Clean","Mop","Door Clean / Outside Clean","Behind Counter Clean","Stock Room Clean"]},
+    {category:"Admin & Ops",emoji:"📋",items:["Cash and Carry List","Magazine Returns","Newspaper Returns","Pies","Pricing","Promotions","Delivery Unload","Till Lift / End of Shift Count","Post Office","Personal Training"]},
+    {category:"Other",emoji:"➕",items:[]},
+  ],
+  gym:[
+    {category:"Equipment",emoji:"🏋️",items:["Equipment Check","Weights Area Tidy","Cardio Zone Check","Pool Check"]},
+    {category:"Cleaning",emoji:"🧹",items:["Locker Room Clean","Deep Clean Zone","Cleaning Rota"]},
+    {category:"Classes",emoji:"📅",items:["Class Setup"]},
+    {category:"Reception",emoji:"🛎️",items:["Reception Cover","Membership Queries"]},
+    {category:"Stock",emoji:"📦",items:["Towel Restock","Protein Bar Restock"]},
+    {category:"Other",emoji:"➕",items:[]},
+  ],
+  cafe:[
+    {category:"Opening",emoji:"🌅",items:["Opening Setup","Pastry Display"]},
+    {category:"Drinks",emoji:"☕",items:["Milk Restock","Syrup Restock","Machine Clean"]},
+    {category:"Cleaning",emoji:"🧹",items:["Floor Sweep","Window Clean","Closing Clean","Deep Clean"]},
+    {category:"Stock",emoji:"📦",items:["Stock Count"]},
+    {category:"Admin & Ops",emoji:"📋",items:["Till Check"]},
+    {category:"Other",emoji:"➕",items:[]},
+  ],
+  bar:[
+    {category:"Bar",emoji:"🍺",items:["Opening Setup","Bar Stock Check","Glass Polish","Fridge Restock"]},
+    {category:"Cellar",emoji:"🪣",items:["Cellar Check"]},
+    {category:"Cleaning",emoji:"🧹",items:["Floor Sweep","Deep Clean","Closing Clean"]},
+    {category:"Admin & Ops",emoji:"📋",items:["Till Check"]},
+    {category:"Other",emoji:"➕",items:[]},
+  ],
+  restaurant:[
+    {category:"Kitchen",emoji:"🍳",items:["Kitchen Prep","Fridge Temp Check","Stock Count"]},
+    {category:"Front of House",emoji:"🍽️",items:["Opening Setup","Table Setup"]},
+    {category:"Cleaning",emoji:"🧹",items:["Floor Sweep","Deep Clean","Closing Clean"]},
+    {category:"Admin & Ops",emoji:"📋",items:["Till Check"]},
+    {category:"Other",emoji:"➕",items:[]},
+  ],
+  hotel:[
+    {category:"Rooms",emoji:"🛏️",items:["Room Checks","Linen Restock"]},
+    {category:"Reception",emoji:"🛎️",items:["Reception Cover","Breakfast Setup","Lost Property Log"]},
+    {category:"Maintenance",emoji:"🔧",items:["Maintenance Check"]},
+    {category:"Admin & Ops",emoji:"📋",items:["Stock Count","Closing Check"]},
+    {category:"Other",emoji:"➕",items:[]},
+  ],
+};
+
 const TASK_POOL=["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking","Pop Stacking","Beers Stacking","Wine Stacking","Dog Food Stacking","Fridge Stacking","Freezer Stacking","Grocery Stacking","Cards Stacking","Chocolate/Sweets Stacking","Mix Ups","Cigarette/Vape Stacking","Spirits Stacking","Fridge Date Check / Temp Check","Product Date Checks","Fridges Clean","Mop","Door Clean / Outside Clean","Behind Counter Clean","Stock Room Clean","Cash and Carry List","Pricing","Promotions","Delivery Unload","Serving","Equipment Check","Locker Room Clean","Class Setup","Reception Cover","Towel Restock","Weights Area Tidy","Cardio Zone Check","Protein Bar Restock","Opening Setup","Machine Clean","Stock Count","Till Check","Fridge Temp Check","Pastry Display","Floor Sweep","Milk Restock","Syrup Restock","Closing Clean","Deep Clean","Window Clean"];
 const SECTOR_DEFAULTS={
   convenience:{Monday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking"]},Tuesday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Dog Food Stacking"]},Wednesday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Pop Stacking"]},Thursday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Grocery Stacking"]},Friday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking"]},Saturday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns"]},Sunday:{_all:["Post Office","Till Lift / End of Shift Count","Newspaper Returns"]}},
@@ -28,7 +77,7 @@ const SECTOR_DEFAULTS={
 const DEFAULT_SCHEDULE=SECTOR_DEFAULTS.convenience;
 
 function getOwnerIdFromURL(){return new URLSearchParams(window.location.search).get("owner")||null;}
-function parseShop(row){return{id:row.id,shopId:row.id,shopName:row.name,sector:(row.sector||"convenience").toLowerCase(),shiftHours:parseInt(row.shift_hours||6),staff:Array.isArray(row.staff)?row.staff:(typeof row.staff==="string"?JSON.parse(row.staff):[]),staffNotes:row.staff_notes||{},ownerPin:row.owner_pin||"0000",ownerId:row.owner_id};}
+function parseShop(row){return{id:row.id,shopId:row.id,shopName:row.name,sector:(row.sector||"convenience").toLowerCase(),shiftHours:parseInt(row.shift_hours||6),staff:Array.isArray(row.staff)?row.staff:(typeof row.staff==="string"?JSON.parse(row.staff):[]),staffNotes:row.staff_notes||{},ownerPin:row.owner_pin||"0000",ownerId:row.owner_id,taskCategories:row.task_categories||null};}
 function parseRec(row){return{id:row.id,staff:row.staff_name||"",date:row.date||"",task:row.task||"",category:row.category||"",mins:Number(row.mins||0),notes:row.notes||"",incident:row.incident||false,week:Number(row.week||0),year:Number(row.year||0),shopId:row.shop_id||""};}
 async function fetchOwnerShops(ownerId){const rows=await sbGet("shops",`owner_id=eq.${encodeURIComponent(ownerId)}&active=eq.true&order=name`);return rows.map(parseShop);}
 async function fetchAllShops(){const rows=await sbGet("shops","active=eq.true&order=name");return rows.map(parseShop);}
@@ -66,8 +115,8 @@ async function fetchStaffNotes(shopId){const rows=await sbGet("shops",`id=eq.${e
 async function saveStaffNotes(shopId,notes){return sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{staff_notes:notes});}
 async function fetchAbsences(shopId){const rows=await sbGet("absences",`shop_id=eq.${encodeURIComponent(shopId)}&order=date.desc`);const out={};rows.forEach(row=>{if(!out[row.staff_name])out[row.staff_name]=[];out[row.staff_name].push({date:row.date,type:"absent",comment:row.comment||"",_id:row.id});});return out;}
 async function saveAbsences(shopId,absencesObj){await sbDelete("absences",`shop_id=eq.${encodeURIComponent(shopId)}`);const rows=[];Object.entries(absencesObj).forEach(([staffName,entries])=>{(entries||[]).forEach(e=>{rows.push({shop_id:shopId,staff_name:staffName,date:e.date,comment:e.comment||null});});});if(rows.length)await sbPost("absences",rows);}
-async function createShop(data){const rows=await sbPost("shops",{id:data.shopId,name:data.shopName,sector:data.sector,owner_id:data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),active:true,staff:data.staff||[],staff_notes:{}});return rows[0];}
-async function updateShop(shopId,data){const rows=await sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{name:data.shopName,sector:data.sector,owner_id:data.ownerId||data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),staff:data.staff||[]});return rows[0];}
+async function createShop(data){const rows=await sbPost("shops",{id:data.shopId,name:data.shopName,sector:data.sector,owner_id:data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),active:true,staff:data.staff||[],staff_notes:{},task_categories:data.taskCategories||null});return rows[0];}
+async function updateShop(shopId,data){const rows=await sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{name:data.shopName,sector:data.sector,owner_id:data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),staff:data.staff||[],task_categories:data.taskCategories!==undefined?data.taskCategories:undefined});return rows[0];}
 async function deleteShop(shopId){return sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{active:false});}
 async function fetchCustomTasks(shopId){try{const rows=await sbGet("custom_tasks",`shop_id=eq.${encodeURIComponent(shopId)}&order=category,name`);return rows;}catch(e){return[];}}
 async function saveCustomTask(shopId,name,category){return sbPost("custom_tasks",{shop_id:shopId,name:name.trim(),category});}
@@ -861,6 +910,174 @@ function ActionsTab({shopConfig,shopId}){
   </div>;
 }
 
+
+// ── CATEGORY EDITOR ──────────────────────────────────────────────────────────
+// Shown as a full sub-view inside the Businesses edit screen.
+// fCats: [{category, emoji, items:[string]}]
+// onSave: (cats) => void   onBack: () => void
+function CategoryEditor({fCats,setFCats,sector,customTasks,onBack}){
+  const [expandedIdx,setExpandedIdx]=useState(null);
+  const [renamingIdx,setRenamingIdx]=useState(null);
+  const [renameVal,setRenameVal]=useState("");
+  const [newCatName,setNewCatName]=useState("");
+  const [addingTask,setAddingTask]=useState(null); // category index
+  const [newTaskVal,setNewTaskVal]=useState("");
+  const inp={width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:14,color:T.text,boxSizing:"border-box",outline:"none"};
+
+  const allTaskPool=[...new Set([
+    ...fCats.flatMap(c=>c.items),
+    ...customTasks.map(t=>t.name),
+  ])];
+
+  const moveTask=(fromCatIdx,task,toCatName)=>{
+    setFCats(prev=>{
+      const next=prev.map(c=>({...c,items:[...c.items]}));
+      next[fromCatIdx].items=next[fromCatIdx].items.filter(t=>t!==task);
+      const toIdx=next.findIndex(c=>c.category===toCatName);
+      if(toIdx>=0&&!next[toIdx].items.includes(task))next[toIdx].items.push(task);
+      return next;
+    });
+  };
+
+  const removeTaskFromCat=(catIdx,task)=>{
+    setFCats(prev=>prev.map((c,i)=>i===catIdx?{...c,items:c.items.filter(t=>t!==task)}:c));
+  };
+
+  const addTaskToCat=(catIdx,taskName)=>{
+    if(!taskName.trim())return;
+    setFCats(prev=>prev.map((c,i)=>{
+      if(i!==catIdx)return c;
+      if(c.items.includes(taskName.trim()))return c;
+      return{...c,items:[...c.items,taskName.trim()]};
+    }));
+    setNewTaskVal("");setAddingTask(null);
+  };
+
+  const renameCategory=(idx,newName)=>{
+    if(!newName.trim())return;
+    setFCats(prev=>prev.map((c,i)=>i===idx?{...c,category:newName.trim()}:c));
+    setRenamingIdx(null);setRenameVal("");
+  };
+
+  const deleteCategory=(idx)=>{
+    setFCats(prev=>prev.filter((_,i)=>i!==idx));
+    if(expandedIdx===idx)setExpandedIdx(null);
+  };
+
+  const addCategory=()=>{
+    if(!newCatName.trim())return;
+    setFCats(prev=>[...prev,{category:newCatName.trim(),emoji:"📌",items:[]}]);
+    setNewCatName("");
+  };
+
+  const moveCatUp=(idx)=>{
+    if(idx===0)return;
+    setFCats(prev=>{const n=[...prev];[n[idx-1],n[idx]]=[n[idx],n[idx-1]];return n;});
+    setExpandedIdx(idx-1);
+  };
+  const moveCatDown=(idx)=>{
+    setFCats(prev=>{if(idx>=prev.length-1)return prev;const n=[...prev];[n[idx],n[idx+1]]=[n[idx+1],n[idx]];return n;});
+    setExpandedIdx(idx+1);
+  };
+
+  // Tasks not in any category — orphans from custom tasks
+  const assignedTasks=new Set(fCats.flatMap(c=>c.items));
+  const unassigned=allTaskPool.filter(t=>!assignedTasks.has(t));
+
+  return <div style={{padding:"0 0 90px"}}>
+    <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 0 12px"}}>
+      <button onClick={onBack} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button>
+      <div style={{fontSize:17,fontWeight:800,color:T.text,flex:1}}>Edit Categories</div>
+    </div>
+    <div style={{fontSize:13,color:T.sub,marginBottom:16,lineHeight:1.6}}>Rename categories, move tasks between them, or add new ones. Changes apply to this business only and update what staff see.</div>
+
+    {fCats.map((cat,idx)=><div key={idx} style={{background:"#fff",borderRadius:14,border:`1.5px solid ${expandedIdx===idx?T.accent:T.border}`,marginBottom:10,overflow:"hidden"}}>
+      {/* Category header */}
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"13px 14px",cursor:"pointer"}} onClick={()=>setExpandedIdx(expandedIdx===idx?null:idx)}>
+        <span style={{fontSize:20}}>{cat.emoji||"📌"}</span>
+        {renamingIdx===idx
+          ? <input autoFocus value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")renameCategory(idx,renameVal);if(e.key==="Escape"){setRenamingIdx(null);}}}
+              onClick={e=>e.stopPropagation()}
+              style={{...inp,flex:1,padding:"6px 10px",marginBottom:0}}/>
+          : <span style={{flex:1,fontSize:14,fontWeight:800,color:T.text}}>{cat.category}</span>
+        }
+        <span style={{fontSize:12,color:T.muted,fontWeight:600,marginRight:4}}>{cat.items.length} tasks</span>
+        <span style={{fontSize:18,color:T.muted,transform:expandedIdx===idx?"rotate(90deg)":"none",transition:"transform 0.2s"}}>›</span>
+      </div>
+
+      {expandedIdx===idx&&<div style={{borderTop:`1px solid ${T.div}`,padding:"12px 14px"}}>
+        {/* Rename + order controls */}
+        <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+          {renamingIdx===idx
+            ? <><button onClick={()=>renameCategory(idx,renameVal)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save name</button>
+                <button onClick={()=>setRenamingIdx(null)} style={{background:T.bg,color:T.sub,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Cancel</button></>
+            : <button onClick={e=>{e.stopPropagation();setRenamingIdx(idx);setRenameVal(cat.category);}} style={{background:T.bg,color:T.sub,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>✏️ Rename</button>
+          }
+          <button onClick={()=>moveCatUp(idx)} disabled={idx===0} style={{background:T.bg,color:idx===0?T.muted:T.sub,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:idx===0?"default":"pointer",opacity:idx===0?0.4:1}}>↑</button>
+          <button onClick={()=>moveCatDown(idx)} disabled={idx===fCats.length-1} style={{background:T.bg,color:idx===fCats.length-1?T.muted:T.sub,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:idx===fCats.length-1?"default":"pointer",opacity:idx===fCats.length-1?0.4:1}}>↓</button>
+          {cat.items.length===0&&<button onClick={()=>deleteCategory(idx)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>🗑 Delete</button>}
+        </div>
+
+        {/* Task list */}
+        {cat.items.length===0&&<p style={{color:T.muted,fontSize:13,margin:"0 0 12px"}}>No tasks in this category.</p>}
+        {cat.items.map(task=><div key={task} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 0",borderBottom:`1px solid ${T.div}`}}>
+          <span style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{task}</span>
+          {/* Move to another category */}
+          <select value="" onChange={e=>{if(e.target.value)moveTask(idx,task,e.target.value);}}
+            style={{padding:"4px 8px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:12,color:T.sub,background:"#fff",cursor:"pointer"}}
+            onClick={e=>e.stopPropagation()}>
+            <option value="">Move to…</option>
+            {fCats.filter((_,i)=>i!==idx).map(c=><option key={c.category} value={c.category}>{c.category}</option>)}
+          </select>
+          <button onClick={()=>removeTaskFromCat(idx,task)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>✕</button>
+        </div>)}
+
+        {/* Add task to this category */}
+        {addingTask===idx
+          ? <div style={{display:"flex",gap:8,marginTop:10}}>
+              <input autoFocus value={newTaskVal} onChange={e=>setNewTaskVal(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")addTaskToCat(idx,newTaskVal);if(e.key==="Escape")setAddingTask(null);}}
+                placeholder="Task name…" style={{...inp,flex:1,padding:"8px 10px",marginBottom:0}}/>
+              <button onClick={()=>addTaskToCat(idx,newTaskVal)} style={{background:T.accent,color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Add</button>
+              <button onClick={()=>setAddingTask(null)} style={{background:T.bg,color:T.sub,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:700,cursor:"pointer"}}>✕</button>
+            </div>
+          : <button onClick={()=>{setAddingTask(idx);setNewTaskVal("");}} style={{marginTop:10,background:T.bg,border:`1px dashed ${T.border}`,borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:700,color:T.sub,cursor:"pointer",width:"100%"}}>+ Add task to {cat.category}</button>
+        }
+      </div>}
+    </div>)}
+
+    {/* Unassigned tasks */}
+    {unassigned.length>0&&<div style={{background:T.amberLight,borderRadius:12,padding:"12px 14px",marginBottom:14,border:`1px solid #FDE68A`}}>
+      <div style={{fontSize:13,fontWeight:700,color:T.amber,marginBottom:8}}>⚠️ Unassigned tasks ({unassigned.length})</div>
+      <div style={{fontSize:12,color:T.amber,marginBottom:10}}>These tasks aren't in any category. Assign them or they won't appear to staff.</div>
+      {unassigned.map(task=><div key={task} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:`1px solid #FDE68A`}}>
+        <span style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{task}</span>
+        <select value="" onChange={e=>{if(!e.target.value)return;setFCats(prev=>prev.map(c=>c.category===e.target.value?{...c,items:[...c.items,task]}:c));}}
+          style={{padding:"4px 8px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:12,color:T.sub,background:"#fff"}}>
+          <option value="">Add to…</option>
+          {fCats.map(c=><option key={c.category} value={c.category}>{c.category}</option>)}
+        </select>
+      </div>)}
+    </div>}
+
+    {/* Add new category */}
+    <div style={{background:T.bg,borderRadius:12,padding:"14px",border:`1px dashed ${T.border}`,marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:8}}>Add New Category</div>
+      <div style={{display:"flex",gap:8}}>
+        <input value={newCatName} onChange={e=>setNewCatName(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")addCategory();}}
+          placeholder="e.g. Deliveries" style={{...inp,flex:1,marginBottom:0}}/>
+        <button onClick={addCategory} disabled={!newCatName.trim()} style={{background:newCatName.trim()?"#111":"#9ca3af",color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Add</button>
+      </div>
+    </div>
+
+    <div style={{background:T.blueLight,borderRadius:12,padding:"12px 14px",border:"1px solid #BFDBFE",fontSize:13,color:T.blue,lineHeight:1.6}}>
+      💡 Changes are saved when you tap <strong>Save Business</strong> on the previous screen.
+    </div>
+  </div>;
+}
+
 function ManageTab({shops,ownerId,onShopsUpdated}){
   const [view,setView]=useState("list");const [editShop,setEditShop]=useState(null);const [saving,setSaving]=useState(false);const [saveMsg,setSaveMsg]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null);const [deleting,setDeleting]=useState(false);
@@ -868,11 +1085,24 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   const [managingTasksFor,setManagingTasksFor]=useState(null); // shopId
   const [shopCustomTasks,setShopCustomTasks]=useState([]);const [loadingCT,setLoadingCT]=useState(false);const [deletingCT,setDeletingCT]=useState(null);
   const openTaskManager=async(shop)=>{setManagingTasksFor(shop);setLoadingCT(true);try{const t=await fetchCustomTasks(shop.shopId);setShopCustomTasks(t);}catch(e){}finally{setLoadingCT(false);}};
+  // Category editor state
+  const [editingCats,setEditingCats]=useState(false);
+  const [fCats,setFCats]=useState([]); // [{category,emoji,items}]
+  const [editCatCustomTasks,setEditCatCustomTasks]=useState([]);
   const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");const [nHours,setNHours]=useState("6");
-  const openEdit=shop=>{setEditShop(shop);setFName(shop.shopName);setFId(shop.shopId);setFSector(shop.sector);setFHours(String(shop.shiftHours));setFPin(shop.ownerPin||"0000");setFStaff([...shop.staff]);setView("edit");};
-  const openAdd=()=>{setEditShop(null);setFName("");setFId("");setFSector("convenience");setFHours("6");setFPin("0000");setFStaff([]);setView("add");};
+  const openEdit=async(shop)=>{
+    setEditShop(shop);setFName(shop.shopName);setFId(shop.shopId);setFSector(shop.sector);setFHours(String(shop.shiftHours));setFPin(shop.ownerPin||"0000");setFStaff([...shop.staff]);
+    // Init category editor — use saved custom or fall back to sector default
+    const base=shop.taskCategories||SECTOR_TASK_CATEGORIES_OWNER[shop.sector]||SECTOR_TASK_CATEGORIES_OWNER.convenience;
+    setFCats(JSON.parse(JSON.stringify(base)));
+    setEditingCats(false);
+    // Also fetch custom tasks for this shop so editor knows about them
+    try{const ct=await fetchCustomTasks(shop.shopId);setEditCatCustomTasks(ct);}catch(e){setEditCatCustomTasks([]);}
+    setView("edit");
+  };
+  const openAdd=()=>{setEditShop(null);setFName("");setFId("");setFSector("convenience");setFHours("6");setFPin("0000");setFStaff([]);setFCats(JSON.parse(JSON.stringify(SECTOR_TASK_CATEGORIES_OWNER.convenience)));setEditingCats(false);setEditCatCustomTasks([]);setView("add");};
   const addStaff=()=>{if(!nName.trim()||nPin.length!==4)return;setFStaff(p=>[...p,{name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift,hourlyRate:parseFloat(nRate)||12.21,shiftHours:parseFloat(nHours)||parseFloat(fHours)||6}]);setNName("");setNPin("");setNShift("morning");setNRate("12.21");setNHours(fHours||"6");};
-  const handleSave=async()=>{if(!fName.trim()||!fId.trim())return;setSaving(true);setSaveMsg(null);try{const data={shopId:fId.trim().toLowerCase().replace(/\s+/g,"_"),shopName:fName.trim(),sector:fSector,shiftHours:parseInt(fHours)||6,staff:fStaff,ownerPin:fPin,ownerId};if(editShop)await updateShop(editShop.id,data);else await createShop(data);setSaveMsg("ok");await onShopsUpdated();setTimeout(()=>{setSaveMsg(null);setView("list");},1500);}catch(e){setSaveMsg(e.message||"Save failed");}finally{setSaving(false);}};
+  const handleSave=async()=>{if(!fName.trim()||!fId.trim())return;setSaving(true);setSaveMsg(null);try{const data={shopId:fId.trim().toLowerCase().replace(/\s+/g,"_"),shopName:fName.trim(),sector:fSector,shiftHours:parseInt(fHours)||6,staff:fStaff,ownerPin:fPin,ownerId,taskCategories:fCats};if(editShop)await updateShop(editShop.id,data);else await createShop(data);setSaveMsg("ok");await onShopsUpdated();setTimeout(()=>{setSaveMsg(null);setView("list");},1500);}catch(e){setSaveMsg(e.message||"Save failed");}finally{setSaving(false);}};
   const handleDelete=async()=>{if(!confirmDelete)return;setDeleting(true);try{await deleteShop(confirmDelete.id);await onShopsUpdated();setConfirmDelete(null);setView("list");}catch(e){setSaveMsg(e.message||"Delete failed");}finally{setDeleting(false);}};
   const inp={width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:15,color:T.text,boxSizing:"border-box",marginBottom:12,outline:"none"};
   const lbl={display:"block",fontSize:13,fontWeight:700,color:T.sub,marginBottom:6};
@@ -885,7 +1115,9 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>https://timesheet-owner-retail-intelligence.vercel.app/?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
   </div>
   :<div style={{padding:"16px 16px 90px"}}>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text,flex:1}}>{view==="edit"?"Edit Business":"Add New Business"}</div>{view==="edit"&&editShop&&<button onClick={()=>setConfirmDelete(editShop)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🗑 Delete</button>}</div>
+    {editingCats
+      ? <CategoryEditor fCats={fCats} setFCats={setFCats} sector={fSector} customTasks={editCatCustomTasks} onBack={()=>setEditingCats(false)}/>
+      : <><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text,flex:1}}>{view==="edit"?"Edit Business":"Add New Business"}</div>{view==="edit"&&editShop&&<button onClick={()=>setConfirmDelete(editShop)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🗑 Delete</button>}</div>
     <label style={lbl}>Business Name</label><input style={inp} value={fName} onChange={e=>setFName(e.target.value)} placeholder="e.g. Londis Horden"/>
     <label style={lbl}>Business ID (used in staff link)</label><input style={inp} value={fId} onChange={e=>setFId(e.target.value)} placeholder="e.g. londis_horden" disabled={view==="edit"}/>
     {view==="add"&&fId&&<div style={{fontSize:12,color:T.blue,marginTop:-8,marginBottom:12,wordBreak:"break-all"}}>📲 Staff link: https://timesheet-staff-retail-intelligence.vercel.app/?shop={fId}</div>}
@@ -906,8 +1138,14 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     <div style={{background:T.bg,borderRadius:12,padding:"14px",marginBottom:16,border:`1px dashed ${T.border}`}}><div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:10}}>Add Staff Member</div><input style={{...inp,marginBottom:8}} value={nName} onChange={e=>setNName(e.target.value)} placeholder="Name"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><input style={{...inp,marginBottom:8}} type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value)} placeholder="4-digit PIN"/><select style={{...inp,marginBottom:8}} value={nShift} onChange={e=>setNShift(e.target.value)}><option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option></select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:4}}>SHIFT HOURS</div><input type="number" step="0.5" min="1" max="16" value={nHours} onChange={e=>setNHours(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:13,color:T.text,outline:"none",boxSizing:"border-box"}}/></div><div><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:4}}>HOURLY RATE (£)</div><input type="number" step="0.01" min="0" value={nRate} onChange={e=>setNRate(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:13,color:T.text,outline:"none",boxSizing:"border-box"}}/></div></div><button onClick={addStaff} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>+ Add to Staff List</button></div>
     {saveMsg==="ok"&&<div style={{background:T.greenLight,color:T.green,borderRadius:10,padding:"12px 16px",fontSize:14,fontWeight:700,marginBottom:12}}>✓ Saved successfully!</div>}
     {saveMsg&&saveMsg!=="ok"&&<div style={{background:T.redLight,color:T.red,borderRadius:10,padding:"12px 16px",fontSize:14,marginBottom:12}}>⚠️ {saveMsg}</div>}
+    <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:10,marginTop:4}}>Task Categories</div>
+    <div style={{background:T.bg,borderRadius:12,border:`1px solid ${T.border}`,padding:"12px 14px",marginBottom:16}}>
+      <div style={{fontSize:13,color:T.sub,marginBottom:10,lineHeight:1.5}}>Control which task categories staff see and what's in each one. Currently <strong>{fCats.length}</strong> categories with <strong>{fCats.reduce((a,c)=>a+c.items.length,0)}</strong> tasks.</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{fCats.map(c=><span key={c.category} style={{background:"#fff",border:`1px solid ${T.border}`,borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:600,color:T.sub}}>{c.emoji||"📌"} {c.category} ({c.items.length})</span>)}</div>
+      <button onClick={()=>setEditingCats(true)} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>✏️ Edit Categories</button>
+    </div>
     <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
-  </div>}
+    </></div>}
   {managingTasksFor&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:300}} onClick={()=>setManagingTasksFor(null)}>
     <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"80vh",overflowY:"auto"}}>
       <div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 16px"}}/>
