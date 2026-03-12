@@ -1117,7 +1117,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   :<div style={{padding:"16px 16px 90px"}}>
     {editingCats
       ? <CategoryEditor fCats={fCats} setFCats={setFCats} sector={fSector} customTasks={editCatCustomTasks} onBack={()=>setEditingCats(false)}/>
-      : <><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text,flex:1}}>{view==="edit"?"Edit Business":"Add New Business"}</div>{view==="edit"&&editShop&&<button onClick={()=>setConfirmDelete(editShop)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🗑 Delete</button>}</div>
+      : <div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><button onClick={()=>setView("list")} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:T.text,fontSize:13,fontWeight:700}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text,flex:1}}>{view==="edit"?"Edit Business":"Add New Business"}</div>{view==="edit"&&editShop&&<button onClick={()=>setConfirmDelete(editShop)} style={{background:T.redLight,color:T.red,border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🗑 Delete</button>}</div>
     <label style={lbl}>Business Name</label><input style={inp} value={fName} onChange={e=>setFName(e.target.value)} placeholder="e.g. Londis Horden"/>
     <label style={lbl}>Business ID (used in staff link)</label><input style={inp} value={fId} onChange={e=>setFId(e.target.value)} placeholder="e.g. londis_horden" disabled={view==="edit"}/>
     {view==="add"&&fId&&<div style={{fontSize:12,color:T.blue,marginTop:-8,marginBottom:12,wordBreak:"break-all"}}>📲 Staff link: https://timesheet-staff-retail-intelligence.vercel.app/?shop={fId}</div>}
@@ -1145,7 +1145,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
       <button onClick={()=>setEditingCats(true)} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>✏️ Edit Categories</button>
     </div>
     <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
-    </></div>}
+    </div></div>}
   {managingTasksFor&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:300}} onClick={()=>setManagingTasksFor(null)}>
     <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"80vh",overflowY:"auto"}}>
       <div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 16px"}}/>
