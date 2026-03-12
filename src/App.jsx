@@ -7,12 +7,15 @@ const SECTOR_ICONS={convenience:"🏪",gym:"🏋️",cafe:"☕",bar:"🍺",resta
 const ALL_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const WDAYS=[1,2,3,4,5,6];
 const DNAMES=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-const AT_BASE="app6DROW7O9mZnmTY";
-const AT_SHIFTS="tbl4sVuVCiDCyXF3O";
-const AT_TASKS="tblTl58cC0siAAaSN";
-const AT_SHOPS="tbl907rSCoxOKJBce";
-const AT_TOKEN="patppMWHKbx68aeNP.8d37f524addbaf4997c863c9682c7da9932bb0927727dade5272a72157835ea4";
-const AT_HDR={"Authorization":`Bearer ${AT_TOKEN}`,"Content-Type":"application/json"};
+// ── SUPABASE ──────────────────────────────────────────────────────
+const SB_URL="https://zdotindfglkiasieqosq.supabase.co";
+const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpkb3RpbmRmZ2xraWFzaWVxb3NxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMjE1OTYsImV4cCI6MjA4ODg5NzU5Nn0.4VUdZQbsGFgnTmjbhp2_GFCV563soIKqbcvgrp7QJdI";
+const SB_HDR={"apikey":SB_KEY,"Authorization":`Bearer ${SB_KEY}`,"Content-Type":"application/json","Prefer":"return=representation"};
+async function sbGet(t,p=""){const r=await fetch(`${SB_URL}/rest/v1/${t}?${p}`,{headers:SB_HDR});if(!r.ok){const e=await r.json();throw new Error(e?.message||`GET ${t} failed`);}return r.json();}
+async function sbPost(t,b){const r=await fetch(`${SB_URL}/rest/v1/${t}`,{method:"POST",headers:SB_HDR,body:JSON.stringify(b)});if(!r.ok){const e=await r.json();throw new Error(e?.message||`POST ${t} failed`);}return r.json();}
+async function sbPatch(t,p,b){const r=await fetch(`${SB_URL}/rest/v1/${t}?${p}`,{method:"PATCH",headers:{...SB_HDR,"Prefer":"return=representation"},body:JSON.stringify(b)});if(!r.ok){const e=await r.json();throw new Error(e?.message||`PATCH ${t} failed`);}return r.json();}
+async function sbDelete(t,p){const r=await fetch(`${SB_URL}/rest/v1/${t}?${p}`,{method:"DELETE",headers:SB_HDR});if(!r.ok){const e=await r.json();throw new Error(e?.message||`DELETE ${t} failed`);}return r.json();}
+
 const TASK_POOL=["Post Office","Till Lift / End of Shift Count","Personal Training","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking","Pop Stacking","Beers Stacking","Wine Stacking","Dog Food Stacking","Fridge Stacking","Freezer Stacking","Grocery Stacking","Cards Stacking","Chocolate/Sweets Stacking","Mix Ups","Cigarette/Vape Stacking","Spirits Stacking","Fridge Date Check / Temp Check","Product Date Checks","Fridges Clean","Mop","Door Clean / Outside Clean","Behind Counter Clean","Stock Room Clean","Cash and Carry List","Pricing","Promotions","Delivery Unload","Serving","Equipment Check","Locker Room Clean","Class Setup","Reception Cover","Towel Restock","Weights Area Tidy","Cardio Zone Check","Protein Bar Restock","Opening Setup","Machine Clean","Stock Count","Till Check","Fridge Temp Check","Pastry Display","Floor Sweep","Milk Restock","Syrup Restock","Closing Clean","Deep Clean","Window Clean"];
 const SECTOR_DEFAULTS={
   convenience:{Monday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking"]},Tuesday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Dog Food Stacking"]},Wednesday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Pop Stacking"]},Thursday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Grocery Stacking"]},Friday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns","Crisp Stacking"]},Saturday:{_all:["Post Office","Till Lift / End of Shift Count","Pies","Magazine Returns","Newspaper Returns"]},Sunday:{_all:["Post Office","Till Lift / End of Shift Count","Newspaper Returns"]}},
@@ -24,91 +27,48 @@ const SECTOR_DEFAULTS={
 };
 const DEFAULT_SCHEDULE=SECTOR_DEFAULTS.convenience;
 
-async function atFetchAll(tableId,formula){let rows=[],offset=null;do{let url=`https://api.airtable.com/v0/${AT_BASE}/${tableId}?pageSize=100`;if(formula)url+=`&filterByFormula=${encodeURIComponent(formula)}`;if(offset)url+=`&offset=${encodeURIComponent(offset)}`;const r=await fetch(url,{headers:{"Authorization":`Bearer ${AT_TOKEN}`}});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Airtable fetch failed");}const d=await r.json();rows=[...rows,...d.records];offset=d.offset||null;}while(offset);return rows;}
 function getOwnerIdFromURL(){return new URLSearchParams(window.location.search).get("owner")||null;}
-function parseShop(r){return{id:r.id,shopId:r.fields["Shop ID"]||"",shopName:r.fields["Shop Name"]||"",sector:(r.fields["Sector"]||"convenience").toLowerCase(),shiftHours:parseInt(r.fields["Shift Hours"]||6),staff:(()=>{try{return JSON.parse(r.fields["Staff"]||"[]");}catch{return[];}})(),ownerPin:r.fields["Owner PIN"]||"0000",ownerId:r.fields["Owner ID"]||""};}
-async function fetchOwnerShops(ownerId){const rows=await atFetchAll(AT_SHOPS,`AND({Active}=1,{Owner ID}="${ownerId}")`);return rows.map(parseShop);}
-async function fetchAllShops(){const rows=await atFetchAll(AT_SHOPS,`{Active}=1`);return rows.map(parseShop);}
-function parseRec(r){return{id:r.id,staff:r.fields["Staff Name"]||"",date:r.fields["Date"]||"",task:r.fields["Task Name"]||"",category:r.fields["Category"]||"",mins:Number(r.fields["Total Minutes"]||0),notes:r.fields["Task Notes"]||"",incident:r.fields["Shift Incident"]||"",week:Number(r.fields["Week Number"]||0),shopId:r.fields["Shop ID"]||"",shopName:r.fields["Store"]||"",sector:r.fields["Sector"]||""};}
-async function fetchShiftsForShop(shopId){const rows=await atFetchAll(AT_SHIFTS,`{Shop ID}="${shopId}"`);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
-async function fetchAllShifts(){const rows=await atFetchAll(AT_SHIFTS);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
+function parseShop(row){return{id:row.id,shopId:row.id,shopName:row.name,sector:(row.sector||"convenience").toLowerCase(),shiftHours:parseInt(row.shift_hours||6),staff:Array.isArray(row.staff)?row.staff:(typeof row.staff==="string"?JSON.parse(row.staff):[]),staffNotes:row.staff_notes||{},ownerPin:row.owner_pin||"0000",ownerId:row.owner_id};}
+function parseRec(row){return{id:row.id,staff:row.staff_name||"",date:row.date||"",task:row.task||"",category:row.category||"",mins:Number(row.mins||0),notes:row.notes||"",incident:row.incident||false,week:Number(row.week||0),year:Number(row.year||0),shopId:row.shop_id||""};}
+async function fetchOwnerShops(ownerId){const rows=await sbGet("shops",`owner_id=eq.${encodeURIComponent(ownerId)}&active=eq.true&order=name`);return rows.map(parseShop);}
+async function fetchAllShops(){const rows=await sbGet("shops","active=eq.true&order=name");return rows.map(parseShop);}
+async function fetchShiftsForShop(shopId){const since=new Date();since.setMonth(since.getMonth()-13);const s=since.toISOString().split("T")[0];const rows=await sbGet("shifts",`shop_id=eq.${encodeURIComponent(shopId)}&date=gte.${s}&order=date.desc&limit=50000`);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
+async function fetchAllShifts(){const since=new Date();since.setMonth(since.getMonth()-13);const s=since.toISOString().split("T")[0];const rows=await sbGet("shifts",`date=gte.${s}&order=date.desc&limit=200000`);return rows.map(parseRec).filter(r=>r.staff&&r.date);}
 async function fetchSchedule(shopId,sector,staffNames){
   const defaults=SECTOR_DEFAULTS[sector]||SECTOR_DEFAULTS.convenience;
   let rows=[];
-  // Skip Shop ID filter entirely if it's a linked field - go straight to staff name filter
-  if(staffNames&&staffNames.length>0){
-    try{
-      const orClauses=staffNames.map(n=>`{Staff Name}="${n}"`).join(",");
-      rows=await atFetchAll(AT_TASKS,`OR(${orClauses})`);
-    }catch(e){console.warn("Schedule fetch by staff name failed:",e);}
-  }
-  // If no staff names or that failed, try Shop ID as a last resort
-  if(rows.length===0){
-    try{rows=await atFetchAll(AT_TASKS,`{Shop ID}="${shopId}"`);}catch(e){console.warn("Schedule fetch by shop ID failed:",e);}
-  }
+  try{rows=await sbGet("task_schedules",`shop_id=eq.${encodeURIComponent(shopId)}&order=staff_name`);}catch(e){console.warn("fetchSchedule failed:",e);}
   const sched=JSON.parse(JSON.stringify(defaults));
-  rows.forEach(r=>{
-    const staff=r.fields["Staff Name"],day=r.fields["Day"],tasks=r.fields["Tasks"],
-      shiftStart=(r.fields["Shift Start"]||"").trim(),shiftEnd=(r.fields["Shift End"]||"").trim();
-    // Sanitise record ID - must start with "rec" and contain no colons
-    const recId=r.id&&r.id.startsWith("rec")&&!r.id.includes(":")?r.id:null;
-    if(staff&&day&&recId){
-      try{
-        if(!sched[day])sched[day]={};
-        if(tasks)sched[day][staff]=JSON.parse(tasks);
-        if(!sched[day]._ids)sched[day]._ids={};
-        sched[day]._ids[staff]=recId;
-        if(shiftStart||shiftEnd){if(!sched[day]._times)sched[day]._times={};sched[day]._times[staff]={start:shiftStart,end:shiftEnd};}
-      }catch(e){}
-    }
+  rows.forEach(row=>{
+    const{staff_name:staff,day,tasks,shift_start,shift_end,id}=row;
+    if(!staff||!day)return;
+    try{
+      if(!sched[day])sched[day]={};
+      if(tasks)sched[day][staff]=Array.isArray(tasks)?tasks:JSON.parse(tasks);
+      if(!sched[day]._ids)sched[day]._ids={};
+      sched[day]._ids[staff]=id;
+      if(shift_start||shift_end){if(!sched[day]._times)sched[day]._times={};sched[day]._times[staff]={start:shift_start||"",end:shift_end||""};}
+    }catch(e){}
   });
   return sched;
 }
-
-// ─── PERFORMANCE NOTES (stored in Shops table as JSON in Staff field extension) ─
-// We store notes as a separate key in Airtable Shops: "Staff Notes" (Long text, JSON)
-async function fetchStaffNotes(shopRecordId){
-  const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{headers:AT_HDR});
-  if(!r.ok)return{};
-  const d=await r.json();
-  try{return JSON.parse(d.fields["Staff Notes"]||"{}");}catch{return{};}
-}
-async function saveStaffNotes(shopRecordId,notes){
-  await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Staff Notes":JSON.stringify(notes)}})});
-}
-
-// ─── ABSENCES (stored in Shops table "Absences" field as JSON) ────────────────
-async function fetchAbsences(shopRecordId){
-  const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{headers:AT_HDR});
-  if(!r.ok)return{};
-  const d=await r.json();
-  try{return JSON.parse(d.fields["Absences"]||"{}");}catch{return{};}
-}
-async function saveAbsences(shopRecordId,absences){
-  const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${shopRecordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Absences":JSON.stringify(absences)}})});
-  if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Save failed");}
-  return r.json();
-}
 function saveScheduleToAirtable(sched,shopId,day,staff,tasks,existingId,shiftStart,shiftEnd){
-  const s=(shiftStart||"").trim();const e=(shiftEnd||"").trim();
-  // Never include Shop ID - it's a linked field and can't be written as plain text
-  const fields={"Staff Name":staff,"Day":day,"Tasks":JSON.stringify(tasks),"Last Updated":new Date().toISOString().split("T")[0]};
-  if(s)fields["Shift Start"]=s;
-  if(e)fields["Shift End"]=e;
-  // Only PATCH if existingId is a valid Airtable record ID (starts with "rec", no colons)
-  const validId=existingId&&typeof existingId==="string"&&existingId.startsWith("rec")&&!existingId.includes(":")?existingId:null;
-  if(validId){
-    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}/${validId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields})})
-      .then(async r=>{if(!r.ok){const err=await r.json();throw new Error(err?.error?.message||"Save failed");}return validId;});
+  const payload={shop_id:shopId,staff_name:staff,day,tasks,shift_start:(shiftStart||"").trim()||null,shift_end:(shiftEnd||"").trim()||null,updated_at:new Date().toISOString()};
+  if(existingId){
+    return sbPatch("task_schedules",`id=eq.${existingId}`,payload).then(rows=>rows[0]?.id??existingId);
   }else{
-    return fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_TASKS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields})})
-      .then(async r=>{if(!r.ok){const err=await r.json();throw new Error(err?.error?.message||"Create failed");}return r.json();})
-      .then(d=>d.id);
+    return fetch(`${SB_URL}/rest/v1/task_schedules`,{method:"POST",headers:{...SB_HDR,"Prefer":"resolution=merge-duplicates,return=representation"},body:JSON.stringify(payload)})
+      .then(async r=>{if(!r.ok){const e=await r.json();throw new Error(e?.message||"Schedule save failed");}return r.json();})
+      .then(rows=>rows[0]?.id);
   }
 }
-async function createShop(data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}`,{method:"POST",headers:AT_HDR,body:JSON.stringify({fields:{"Shop ID":data.shopId,"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin,"Owner ID":data.ownerId,"Active":true}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
-async function updateShop(recordId,data){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Shop Name":data.shopName,"Sector":data.sector,"Shift Hours":data.shiftHours,"Staff":JSON.stringify(data.staff),"Owner PIN":data.ownerPin}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
-async function deleteShop(recordId){const r=await fetch(`https://api.airtable.com/v0/${AT_BASE}/${AT_SHOPS}/${recordId}`,{method:"PATCH",headers:AT_HDR,body:JSON.stringify({fields:{"Active":false}})});if(!r.ok){const e=await r.json();throw new Error(e?.error?.message||"Failed");}return r.json();}
+async function fetchStaffNotes(shopId){const rows=await sbGet("shops",`id=eq.${encodeURIComponent(shopId)}&select=staff_notes`);if(!rows.length)return{};return rows[0].staff_notes||{};}
+async function saveStaffNotes(shopId,notes){return sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{staff_notes:notes});}
+async function fetchAbsences(shopId){const rows=await sbGet("absences",`shop_id=eq.${encodeURIComponent(shopId)}&order=date.desc`);const out={};rows.forEach(row=>{if(!out[row.staff_name])out[row.staff_name]=[];out[row.staff_name].push({date:row.date,type:"absent",comment:row.comment||"",_id:row.id});});return out;}
+async function saveAbsences(shopId,absencesObj){await sbDelete("absences",`shop_id=eq.${encodeURIComponent(shopId)}`);const rows=[];Object.entries(absencesObj).forEach(([staffName,entries])=>{(entries||[]).forEach(e=>{rows.push({shop_id:shopId,staff_name:staffName,date:e.date,comment:e.comment||null});});});if(rows.length)await sbPost("absences",rows);}
+async function createShop(data){const rows=await sbPost("shops",{id:data.shopId,name:data.shopName,sector:data.sector,owner_id:data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),active:true,staff:data.staff||[],staff_notes:{}});return rows[0];}
+async function updateShop(shopId,data){const rows=await sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{name:data.shopName,sector:data.sector,owner_id:data.ownerId||data.ownerId,owner_pin:data.ownerPin,shift_hours:String(data.shiftHours||8),staff:data.staff||[]});return rows[0];}
+async function deleteShop(shopId){return sbPatch("shops",`id=eq.${encodeURIComponent(shopId)}`,{active:false});}
 
 const fmt=m=>{if(!m)return"0m";const h=Math.floor(m/60),mn=m%60;return h>0?(h+"h"+(mn>0?" "+mn+"m":"")):(mn+"m");};
 const avgArr=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):0;
@@ -910,7 +870,7 @@ export default function App(){
   const subTitle=subNav?.type==="staffDetail"?subNav.staff:(subNav?.task?.length>22?subNav.task.slice(0,21)+"…":subNav?.task);
 
   if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your business…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
-  if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}<br/><br/><span style={{fontSize:12,color:T.muted}}>Make sure AT_SHOPS is set and ?owner=your_id is in the URL.</span></div></div>;
+  if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}<br/><br/><span style={{fontSize:12,color:T.muted}}>Make sure ?owner=your_id is in the URL.</span></div></div>;
 
   return <div style={{background:T.bg,minHeight:"100vh",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",maxWidth:480,margin:"0 auto"}}>
     <div style={{background:"#111",position:"sticky",top:0,zIndex:20,boxShadow:"0 2px 16px rgba(0,0,0,0.15)"}}>
