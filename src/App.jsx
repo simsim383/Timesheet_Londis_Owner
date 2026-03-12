@@ -916,6 +916,10 @@ export default function App(){
   const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
   const [currentShopId,setCurrentShopId]=useState(null);const [myRecs,setMyRecs]=useState([]);const [allShifts,setAllShifts]=useState([]);const [dataLoading,setDataLoading]=useState(false);
   const [showSwitcher,setShowSwitcher]=useState(false);const [bottomTab,setBottomTab]=useState("home");const [subNav,setSubNav]=useState(null);
+  // PIN gate — persisted for the browser session so owner doesn't re-enter on every refresh
+  const SESSION_PIN_KEY=`ri_owner_pin_${ownerId}`;
+  const [pinUnlocked,setPinUnlocked]=useState(()=>sessionStorage.getItem(SESSION_PIN_KEY)==="1");
+  const [pinInput,setPinInput]=useState("");const [pinError,setPinError]=useState(false);const [pinShops,setPinShops]=useState([]);
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
@@ -924,8 +928,47 @@ export default function App(){
 
   const loadShops=async()=>{try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
-  useEffect(()=>{setLoading(true);loadShops().finally(()=>setLoading(false));},[]); // eslint-disable-line
-  useEffect(()=>{if(!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId]);
+  useEffect(()=>{
+    // Always load shops — we need them to validate the PIN even before unlocking
+    fetchOwnerShops(ownerId).then(s=>{setPinShops(s);if(pinUnlocked){setShops(s);if(s.length>0)setCurrentShopId(s[0].shopId);}}).catch(e=>setError(e.message)).finally(()=>setLoading(false));
+  },[]); // eslint-disable-line
+
+  useEffect(()=>{if(!pinUnlocked||!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId,pinUnlocked]);
+
+  // ── PIN gate screen ───────────────────────────────────────────
+  const tryPin=()=>{
+    // New owner with no shops yet: any 4-digit PIN they set is accepted (they'll set it when creating first business)
+    const correctPin=pinShops.length>0?(pinShops[0].ownerPin||"0000"):null;
+    if(correctPin===null){
+      // No businesses yet — just let them through, they'll set PIN when creating first business
+      sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);
+      fetchAllShops().then(all=>setAllShops(all));
+      return;
+    }
+    if(pinInput===correctPin){
+      sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);
+      setShops(pinShops);if(pinShops.length>0)setCurrentShopId(pinShops[0].shopId);
+      fetchAllShops().then(all=>setAllShops(all));
+    }else{setPinError(true);setPinInput("");}
+  };
+
+  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
+  if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}</div></div>;
+
+  if(!pinUnlocked)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:20}}>
+    <div style={{width:"100%",maxWidth:360,background:"#fff",borderRadius:24,padding:"36px 28px",boxShadow:"0 8px 40px rgba(0,0,0,0.10)",textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:16}}>🔐</div>
+      <div style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:6}}>Owner Dashboard</div>
+      <div style={{fontSize:14,color:T.muted,marginBottom:28,lineHeight:1.6}}>Enter your owner PIN to continue</div>
+      <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
+        {[0,1,2,3].map(i=><div key={i} style={{width:52,height:64,borderRadius:14,border:`2px solid ${pinError?T.red:pinInput.length>i?T.accent:T.border}`,background:pinInput.length>i?T.accentLight:T.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:T.accent,transition:"all 0.15s"}}>{pinInput.length>i?"•":""}</div>)}
+      </div>
+      {pinError&&<div style={{color:T.red,fontSize:13,fontWeight:700,marginBottom:12}}>Incorrect PIN — try again</div>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+        {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=><button key={i} onClick={()=>{if(k==="")return;if(k==="⌫"){setPinInput(p=>p.slice(0,-1));setPinError(false);}else if(pinInput.length<4){const np=pinInput+String(k);setPinInput(np);setPinError(false);if(np.length===4)setTimeout(()=>{const pi=np;const correctPin=pinShops.length>0?(pinShops[0].ownerPin||"0000"):null;if(correctPin===null){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);fetchAllShops().then(all=>setAllShops(all));}else if(pi===correctPin){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);setShops(pinShops);if(pinShops.length>0)setCurrentShopId(pinShops[0].shopId);fetchAllShops().then(all=>setAllShops(all));}else{setPinError(true);setPinInput("");}},120);}}} style={{height:58,borderRadius:14,border:`1px solid ${T.border}`,background:k===""?"transparent":T.bg,fontSize:k==="⌫"?20:22,fontWeight:700,color:T.text,cursor:k===""?"default":"pointer",transition:"background 0.1s"}}>{k}</button>)}
+      </div>
+    </div>
+  </div>;
 
   const currentShop=shops.find(s=>s.shopId===currentShopId);
   const ownedShopIds=shops.map(s=>s.shopId);
@@ -934,29 +977,31 @@ export default function App(){
   const isSubPage=!!subNav;
   const subTitle=subNav?.type==="staffDetail"?subNav.staff:(subNav?.task?.length>22?subNav.task.slice(0,21)+"…":subNav?.task);
 
-  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your business…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
-  if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}<br/><br/><span style={{fontSize:12,color:T.muted}}>Make sure ?owner=your_id is in the URL.</span></div></div>;
+  // Main content — when no shops yet, always show ManageTab so they can add their first business
+  const mainContent=()=>{
+    if(!currentShop||bottomTab==="manage")return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{const s=await loadShops();setShops(s);}}/>;
+    if(isSubPage)return subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onBack={()=>setSubNav(null)} onRemoveStaff={async()=>{await loadShops();setSubNav(null);}}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>;
+    if(bottomTab==="home")return <HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>;
+    if(bottomTab==="benchmarks")return <BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>;
+    if(bottomTab==="staff")return <StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops();}}/>;
+    if(bottomTab==="actions")return <ActionsTab shopConfig={currentShop} shopId={currentShopId}/>;
+    return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>;
+  };
 
   return <div style={{background:T.bg,minHeight:"100vh",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",maxWidth:480,margin:"0 auto"}}>
     <div style={{background:"#111",position:"sticky",top:0,zIndex:20,boxShadow:"0 2px 16px rgba(0,0,0,0.15)"}}>
       <div style={{padding:"14px 16px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           {isSubPage&&<button onClick={goBack} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:10,padding:"6px 12px",cursor:"pointer",color:"#fff",fontSize:13,fontWeight:700,marginRight:4}}>← Back</button>}
-          <div>{!isSubPage?<><div style={{fontSize:16,fontWeight:800,color:"#fff",letterSpacing:-0.3}}>{currentShop?`${SECTOR_ICONS[currentShop.sector]||"🏢"} ${currentShop.shopName}`:"StaffLog Owner"}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:1}}>{greeting} · {now.toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div></>:<><div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{subTitle}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:1}}>{currentShop?.shopName}</div></>}</div>
+          <div>{!isSubPage?<><div style={{fontSize:16,fontWeight:800,color:"#fff",letterSpacing:-0.3}}>{currentShop?`${SECTOR_ICONS[currentShop.sector]||"🏢"} ${currentShop.shopName}`:"Retail Intelligence"}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:1}}>{greeting} · {now.toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}</div></>:<><div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{subTitle}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginTop:1}}>{currentShop?.shopName}</div></>}</div>
         </div>
         <div style={{display:"flex",gap:8}}>
           {shops.length>1&&!isSubPage&&<button onClick={()=>setShowSwitcher(true)} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"6px 12px",fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.7)",cursor:"pointer"}}>Switch ▾</button>}
-          <button onClick={()=>{setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).finally(()=>setDataLoading(false));}} disabled={dataLoading} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"6px 12px",fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.7)",cursor:"pointer"}}>{dataLoading?"…":"↻"}</button>
+          <button onClick={()=>{setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).finally(()=>setDataLoading(false));}} disabled={dataLoading||!currentShopId} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:10,padding:"6px 12px",fontSize:13,fontWeight:700,color:"rgba(255,255,255,0.7)",cursor:"pointer"}}>{dataLoading?"…":"↻"}</button>
         </div>
       </div>
     </div>
-    {!currentShop?<div style={{padding:16}}><Card><p style={{color:T.muted,fontSize:14,textAlign:"center",margin:0}}>No shops found. Go to Manage to add your first shop.</p></Card></div>
-    :isSubPage?(subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onBack={()=>setSubNav(null)} onRemoveStaff={async()=>{await loadShops();setSubNav(null);}}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>)
-    :bottomTab==="home"?<HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>
-    :bottomTab==="benchmarks"?<BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>
-    :bottomTab==="staff"?<StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops();}}/>
-    :bottomTab==="actions"?<ActionsTab shopConfig={currentShop} shopId={currentShopId}/>
-    :<ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>}
+    {mainContent()}
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"#fff",borderTop:`1px solid ${T.border}`,display:"flex",zIndex:20,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}}>
       {[{id:"home",icon:"🏠",label:"Home"},{id:"benchmarks",icon:"📊",label:"Benchmarks"},{id:"staff",icon:"👥",label:"Staff"},{id:"actions",icon:"✏️",label:"Actions"},{id:"manage",icon:"⚙️",label:"Businesses"}].map(tab=><button key={tab.id} onClick={()=>{setBottomTab(tab.id);setSubNav(null);window.scrollTo(0,0);}} style={{flex:1,background:"none",border:"none",padding:"12px 0 16px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><span style={{fontSize:20}}>{tab.icon}</span><span style={{fontSize:10,fontWeight:700,color:bottomTab===tab.id?T.accent:T.muted}}>{tab.label}</span>{bottomTab===tab.id&&!isSubPage&&<div style={{width:20,height:3,borderRadius:99,background:T.accent,marginTop:1}}/>}</button>)}
     </div>
