@@ -1106,7 +1106,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   const handleDelete=async()=>{if(!confirmDelete)return;setDeleting(true);try{await deleteShop(confirmDelete.id);await onShopsUpdated();setConfirmDelete(null);setView("list");}catch(e){setSaveMsg(e.message||"Delete failed");}finally{setDeleting(false);}};
   const inp={width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:15,color:T.text,boxSizing:"border-box",marginBottom:12,outline:"none"};
   const lbl={display:"block",fontSize:13,fontWeight:700,color:T.sub,marginBottom:6};
-  return <>
+  return <div>
   {view==="list"?<div style={{padding:"16px 16px 90px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>Manage Businesses</div><button onClick={openAdd} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add Business</button></div>
     <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your businesses.</div>
@@ -1146,6 +1146,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     </div>
     <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
     </div>}
+  </div>}
   {managingTasksFor&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",zIndex:300}} onClick={()=>setManagingTasksFor(null)}>
     <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:"24px 24px 0 0",padding:"24px 20px 44px",width:"100%",maxWidth:480,margin:"0 auto",maxHeight:"80vh",overflowY:"auto"}}>
       <div style={{width:40,height:4,borderRadius:99,background:"#E5E7EB",margin:"0 auto 16px"}}/>
@@ -1174,7 +1175,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
       </div>
     </div>
   </div>}
-  </>;
+  </div>;
 }
 
 function NewOwnerSetup(){
