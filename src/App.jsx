@@ -889,11 +889,17 @@ function NewOwnerSetup(){
     if(!id||id.length<3){setCheckMsg("ID must be at least 3 characters");return;}
     setChecking(true);setCheckMsg(null);
     try{
-      const [asOwner,asShopId]=await Promise.all([
-        sbGet("shops",`owner_id=eq.${encodeURIComponent(id)}&limit=1`),
+      // Check owner_ids table — this is written the moment an ID is claimed,
+      // even before the first business is created, so duplicates are impossible
+      const [takenOwner,takenShop]=await Promise.all([
+        sbGet("owner_ids",`id=eq.${encodeURIComponent(id)}&limit=1`),
         sbGet("shops",`id=eq.${encodeURIComponent(id)}&limit=1`),
       ]);
-      if(asOwner.length>0||asShopId.length>0){setCheckMsg("That ID is already in use — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;}
+      if(takenOwner.length>0||takenShop.length>0){
+        setCheckMsg("That ID is already taken — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;
+      }
+      // Claim the ID immediately — write to owner_ids before anything else
+      await sbPost("owner_ids",{id,created_at:new Date().toISOString()});
       // Mark invite code as used
       const code=inviteCode.trim().toUpperCase();
       await sbPatch("invite_codes",`code=eq.${encodeURIComponent(code)}`,{used:true,used_by:id,used_at:new Date().toISOString()});
@@ -951,64 +957,18 @@ export default function App(){
   const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
   const [currentShopId,setCurrentShopId]=useState(null);const [myRecs,setMyRecs]=useState([]);const [allShifts,setAllShifts]=useState([]);const [dataLoading,setDataLoading]=useState(false);
   const [showSwitcher,setShowSwitcher]=useState(false);const [bottomTab,setBottomTab]=useState("home");const [subNav,setSubNav]=useState(null);
-  // PIN gate — persisted for the browser session so owner doesn't re-enter on every refresh
-  const SESSION_PIN_KEY=`ri_owner_pin_${ownerId}`;
-  const [pinUnlocked,setPinUnlocked]=useState(()=>sessionStorage.getItem(SESSION_PIN_KEY)==="1");
-  const [pinInput,setPinInput]=useState("");const [pinError,setPinError]=useState(false);const [pinShops,setPinShops]=useState([]);
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
-  // No ?owner= param → show self-serve setup
   if(!ownerId)return <NewOwnerSetup/>;
 
   const loadShops=async()=>{try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
-  useEffect(()=>{
-    // Always load shops — we need them to validate the PIN even before unlocking
-    fetchOwnerShops(ownerId).then(s=>{setPinShops(s);if(pinUnlocked){setShops(s);if(s.length>0)setCurrentShopId(s[0].shopId);}}).catch(e=>setError(e.message)).finally(()=>setLoading(false));
-  },[]); // eslint-disable-line
+  useEffect(()=>{setLoading(true);loadShops().finally(()=>setLoading(false));},[]); // eslint-disable-line
+  useEffect(()=>{if(!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId]);
 
-  useEffect(()=>{if(!pinUnlocked||!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId,pinUnlocked]);
-
-  // ── PIN gate screen ───────────────────────────────────────────
-  // All shops for an owner share the same owner PIN — find the first one that has one set
-  const resolveOwnerPin=()=>{
-    if(!pinShops.length)return null; // no shops yet → let through
-    // Use the PIN from whichever shop has a non-default value, else "0000"
-    const withPin=pinShops.find(s=>s.ownerPin&&s.ownerPin!=="0000");
-    return(withPin||pinShops[0]).ownerPin||"0000";
-  };
-  const tryPin=()=>{
-    const correctPin=resolveOwnerPin();
-    if(correctPin===null){
-      sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);
-      fetchAllShops().then(all=>setAllShops(all));
-      return;
-    }
-    if(pinInput===correctPin){
-      sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);
-      setShops(pinShops);if(pinShops.length>0)setCurrentShopId(pinShops[0].shopId);
-      fetchAllShops().then(all=>setAllShops(all));
-    }else{setPinError(true);setPinInput("");}
-  };
-
-  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
+  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your business…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
   if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}</div></div>;
-
-  if(!pinUnlocked)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:20}}>
-    <div style={{width:"100%",maxWidth:360,background:"#fff",borderRadius:24,padding:"36px 28px",boxShadow:"0 8px 40px rgba(0,0,0,0.10)",textAlign:"center"}}>
-      <div style={{fontSize:40,marginBottom:16}}>🔐</div>
-      <div style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:6}}>Owner Dashboard</div>
-      <div style={{fontSize:14,color:T.muted,marginBottom:28,lineHeight:1.6}}>Enter your owner PIN to continue</div>
-      <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
-        {[0,1,2,3].map(i=><div key={i} style={{width:52,height:64,borderRadius:14,border:`2px solid ${pinError?T.red:pinInput.length>i?T.accent:T.border}`,background:pinInput.length>i?T.accentLight:T.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:T.accent,transition:"all 0.15s"}}>{pinInput.length>i?"•":""}</div>)}
-      </div>
-      {pinError&&<div style={{color:T.red,fontSize:13,fontWeight:700,marginBottom:12}}>Incorrect PIN — try again</div>}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-        {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=><button key={i} onClick={()=>{if(k==="")return;if(k==="⌫"){setPinInput(p=>p.slice(0,-1));setPinError(false);}else if(pinInput.length<4){const np=pinInput+String(k);setPinInput(np);setPinError(false);if(np.length===4)setTimeout(()=>{const correctPin=resolveOwnerPin();if(correctPin===null){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);fetchAllShops().then(all=>setAllShops(all));}else if(np===correctPin){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);setShops(pinShops);if(pinShops.length>0)setCurrentShopId(pinShops[0].shopId);fetchAllShops().then(all=>setAllShops(all));}else{setPinError(true);setPinInput("");}},120);}}} style={{height:58,borderRadius:14,border:`1px solid ${T.border}`,background:k===""?"transparent":T.bg,fontSize:k==="⌫"?20:22,fontWeight:700,color:T.text,cursor:k===""?"default":"pointer",transition:"background 0.1s"}}>{k}</button>)}
-      </div>
-    </div>
-  </div>;
 
   const currentShop=shops.find(s=>s.shopId===currentShopId);
   const ownedShopIds=shops.map(s=>s.shopId);
@@ -1017,7 +977,6 @@ export default function App(){
   const isSubPage=!!subNav;
   const subTitle=subNav?.type==="staffDetail"?subNav.staff:(subNav?.task?.length>22?subNav.task.slice(0,21)+"…":subNav?.task);
 
-  // Main content — when no shops yet, always show ManageTab so they can add their first business
   const mainContent=()=>{
     if(!currentShop||bottomTab==="manage")return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{const s=await loadShops();setShops(s);}}/>;
     if(isSubPage)return subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onBack={()=>setSubNav(null)} onRemoveStaff={async()=>{await loadShops();setSubNav(null);}}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>;
