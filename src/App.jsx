@@ -804,10 +804,10 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   const [view,setView]=useState("list");const [editShop,setEditShop]=useState(null);const [saving,setSaving]=useState(false);const [saveMsg,setSaveMsg]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null);const [deleting,setDeleting]=useState(false);
   const [fName,setFName]=useState("");const [fId,setFId]=useState("");const [fSector,setFSector]=useState("convenience");const [fHours,setFHours]=useState("6");const [fPin,setFPin]=useState("0000");const [fStaff,setFStaff]=useState([]);
-  const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");
+  const [nName,setNName]=useState("");const [nPin,setNPin]=useState("");const [nShift,setNShift]=useState("morning");const [nRate,setNRate]=useState("12.21");const [nHours,setNHours]=useState("6");
   const openEdit=shop=>{setEditShop(shop);setFName(shop.shopName);setFId(shop.shopId);setFSector(shop.sector);setFHours(String(shop.shiftHours));setFPin(shop.ownerPin||"0000");setFStaff([...shop.staff]);setView("edit");};
   const openAdd=()=>{setEditShop(null);setFName("");setFId("");setFSector("convenience");setFHours("6");setFPin("0000");setFStaff([]);setView("add");};
-  const addStaff=()=>{if(!nName.trim()||nPin.length!==4)return;setFStaff(p=>[...p,{name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift,hourlyRate:parseFloat(nRate)||12.21}]);setNName("");setNPin("");setNShift("morning");setNRate("12.21");};
+  const addStaff=()=>{if(!nName.trim()||nPin.length!==4)return;setFStaff(p=>[...p,{name:nName.trim(),pin:nPin,initials:nName.trim().slice(0,2).toUpperCase(),shift:nShift,hourlyRate:parseFloat(nRate)||12.21,shiftHours:parseFloat(nHours)||parseFloat(fHours)||6}]);setNName("");setNPin("");setNShift("morning");setNRate("12.21");setNHours(fHours||"6");};
   const handleSave=async()=>{if(!fName.trim()||!fId.trim())return;setSaving(true);setSaveMsg(null);try{const data={shopId:fId.trim().toLowerCase().replace(/\s+/g,"_"),shopName:fName.trim(),sector:fSector,shiftHours:parseInt(fHours)||6,staff:fStaff,ownerPin:fPin,ownerId};if(editShop)await updateShop(editShop.id,data);else await createShop(data);setSaveMsg("ok");await onShopsUpdated();setTimeout(()=>{setSaveMsg(null);setView("list");},1500);}catch(e){setSaveMsg(e.message||"Save failed");}finally{setSaving(false);}};
   const handleDelete=async()=>{if(!confirmDelete)return;setDeleting(true);try{await deleteShop(confirmDelete.id);await onShopsUpdated();setConfirmDelete(null);setView("list");}catch(e){setSaveMsg(e.message||"Delete failed");}finally{setDeleting(false);}};
   const inp={width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${T.border}`,fontSize:15,color:T.text,boxSizing:"border-box",marginBottom:12,outline:"none"};
@@ -816,7 +816,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   {view==="list"?<div style={{padding:"16px 16px 90px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><div style={{fontSize:20,fontWeight:800,color:T.text}}>Manage Businesses</div><button onClick={openAdd} style={{background:"#111",color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ Add Business</button></div>
     <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your businesses.</div>
-    {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}} onPress={()=>openEdit(shop)}><div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff · {shop.shiftHours}h shifts</div><div style={{fontSize:11,color:T.blue,marginTop:4,wordBreak:"break-all",lineHeight:1.5}}>📲 Staff link: {staffUrl}</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div></Card>;})}
+    {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}} onPress={()=>openEdit(shop)}><div style={{display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div><div style={{fontSize:11,color:T.blue,marginTop:4,wordBreak:"break-all",lineHeight:1.5}}>📲 Staff link: {staffUrl}</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div></Card>;})}
     {!shops.length&&<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"32px 0"}}>No businesses yet. Tap + Add Business.</p>}
     <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>https://timesheet-owner-retail-intelligence.vercel.app/?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
   </div>
@@ -826,10 +826,20 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     <label style={lbl}>Business ID (used in staff link)</label><input style={inp} value={fId} onChange={e=>setFId(e.target.value)} placeholder="e.g. londis_horden" disabled={view==="edit"}/>
     {view==="add"&&fId&&<div style={{fontSize:12,color:T.blue,marginTop:-8,marginBottom:12,wordBreak:"break-all"}}>📲 Staff link: https://timesheet-staff-retail-intelligence.vercel.app/?shop={fId}</div>}
     <label style={lbl}>Sector</label><select style={inp} value={fSector} onChange={e=>setFSector(e.target.value)}><option value="convenience">🏪 Convenience Store</option><option value="gym">🏋️ Gym / Fitness</option><option value="cafe">☕ Cafe / Coffee Shop</option><option value="bar">🍺 Bar / Pub</option><option value="restaurant">🍽️ Restaurant</option><option value="hotel">🏨 Hotel</option></select>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><div><label style={lbl}>Shift Hours</label><input style={inp} type="number" value={fHours} onChange={e=>setFHours(e.target.value)} min="1" max="12"/></div><div><label style={lbl}>Owner PIN</label><input style={inp} type="text" maxLength={4} value={fPin} onChange={e=>setFPin(e.target.value)} placeholder="0000"/></div></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}><div><label style={lbl}>Default Shift Hours</label><input style={inp} type="number" value={fHours} onChange={e=>setFHours(e.target.value)} min="1" max="16"/><div style={{fontSize:11,color:T.muted,marginTop:-8,marginBottom:8}}>Used as fallback if staff member has no individual hours set</div></div><div><label style={lbl}>Owner PIN</label><input style={inp} type="text" maxLength={4} value={fPin} onChange={e=>setFPin(e.target.value)} placeholder="0000"/></div></div>
     <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:12,marginTop:4}}>Staff Members</div>
-    {fStaff.map((st,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:10,background:T.bg,borderRadius:10,padding:"10px 14px",marginBottom:8}}><Avatar name={st.name} size={32} color={SC[i%SC.length]}/><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:T.text}}>{st.name}</div><div style={{fontSize:12,color:T.muted}}>PIN: {st.pin} · {st.shift} · £{(st.hourlyRate||12.21).toFixed(2)}/hr</div></div><input type="number" step="0.01" min="0" value={st.hourlyRate||12.21} onChange={e=>setFStaff(p=>p.map((s,j)=>j===i?{...s,hourlyRate:parseFloat(e.target.value)||12.21}:s))} style={{width:64,padding:"4px 6px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:12,textAlign:"center",color:T.text}}/><button onClick={()=>setFStaff(p=>p.filter((_,j)=>j!==i))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button></div>)}
-    <div style={{background:T.bg,borderRadius:12,padding:"14px",marginBottom:16,border:`1px dashed ${T.border}`}}><div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:10}}>Add Staff Member</div><input style={{...inp,marginBottom:8}} value={nName} onChange={e=>setNName(e.target.value)} placeholder="Name"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><input style={{...inp,marginBottom:8}} type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value)} placeholder="4-digit PIN"/><select style={{...inp,marginBottom:8}} value={nShift} onChange={e=>setNShift(e.target.value)}><option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option></select></div><div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:8,alignItems:"center",marginBottom:8}}><span style={{fontSize:13,fontWeight:700,color:T.sub,whiteSpace:"nowrap"}}>£ Hourly Rate</span><input style={{...inp,marginBottom:0}} type="number" step="0.01" min="0" value={nRate} onChange={e=>setNRate(e.target.value)} placeholder="12.21"/></div><button onClick={addStaff} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>+ Add to Staff List</button></div>
+    {fStaff.map((st,i)=><div key={i} style={{background:T.bg,borderRadius:10,padding:"12px 14px",marginBottom:8,border:`1px solid ${T.border}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+        <Avatar name={st.name} size={32} color={SC[i%SC.length]}/>
+        <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:T.text}}>{st.name}</div><div style={{fontSize:12,color:T.muted}}>PIN: {st.pin} · {st.shift}</div></div>
+        <button onClick={()=>setFStaff(p=>p.filter((_,j)=>j!==i))} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Remove</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:4}}>SHIFT HOURS</div><input type="number" step="0.5" min="1" max="16" value={st.shiftHours||fHours||6} onChange={e=>setFStaff(p=>p.map((s,j)=>j===i?{...s,shiftHours:parseFloat(e.target.value)||6}:s))} style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:13,color:T.text,outline:"none"}}/></div>
+        <div><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:4}}>HOURLY RATE (£)</div><input type="number" step="0.01" min="0" value={st.hourlyRate||12.21} onChange={e=>setFStaff(p=>p.map((s,j)=>j===i?{...s,hourlyRate:parseFloat(e.target.value)||12.21}:s))} style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:13,color:T.text,outline:"none"}}/></div>
+      </div>
+    </div>)}
+    <div style={{background:T.bg,borderRadius:12,padding:"14px",marginBottom:16,border:`1px dashed ${T.border}`}}><div style={{fontSize:13,fontWeight:700,color:T.sub,marginBottom:10}}>Add Staff Member</div><input style={{...inp,marginBottom:8}} value={nName} onChange={e=>setNName(e.target.value)} placeholder="Name"/><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><input style={{...inp,marginBottom:8}} type="text" maxLength={4} value={nPin} onChange={e=>setNPin(e.target.value)} placeholder="4-digit PIN"/><select style={{...inp,marginBottom:8}} value={nShift} onChange={e=>setNShift(e.target.value)}><option value="morning">Morning</option><option value="evening">Evening</option><option value="full">Full Day</option></select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:4}}>SHIFT HOURS</div><input type="number" step="0.5" min="1" max="16" value={nHours} onChange={e=>setNHours(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:13,color:T.text,outline:"none",boxSizing:"border-box"}}/></div><div><div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:4}}>HOURLY RATE (£)</div><input type="number" step="0.01" min="0" value={nRate} onChange={e=>setNRate(e.target.value)} style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,fontSize:13,color:T.text,outline:"none",boxSizing:"border-box"}}/></div></div><button onClick={addStaff} style={{background:T.accent,color:"#fff",border:"none",borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>+ Add to Staff List</button></div>
     {saveMsg==="ok"&&<div style={{background:T.greenLight,color:T.green,borderRadius:10,padding:"12px 16px",fontSize:14,fontWeight:700,marginBottom:12}}>✓ Saved successfully!</div>}
     {saveMsg&&saveMsg!=="ok"&&<div style={{background:T.redLight,color:T.red,borderRadius:10,padding:"12px 16px",fontSize:14,marginBottom:12}}>⚠️ {saveMsg}</div>}
     <button onClick={handleSave} disabled={saving||!fName.trim()||!fId.trim()} style={{display:"block",width:"100%",background:saving?"#9ca3af":"#111",color:"#fff",border:"none",padding:"18px",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":"Save Business"}</button>
@@ -849,6 +859,58 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   </>;
 }
 
+function NewOwnerSetup(){
+  const [step,setStep]=useState(1);
+  const [ownerId,setOwnerId]=useState("");
+  const [ownerIdConfirmed,setOwnerIdConfirmed]=useState("");
+  const [checking,setChecking]=useState(false);
+  const [checkMsg,setCheckMsg]=useState(null);
+  const inp={width:"100%",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,fontSize:16,color:T.text,boxSizing:"border-box",outline:"none",marginBottom:8};
+  const ownerUrl=`https://timesheet-owner-retail-intelligence.vercel.app/?owner=${ownerIdConfirmed}`;
+  const checkAvailability=async()=>{
+    const id=ownerId.trim().toLowerCase().replace(/\s+/g,"_");
+    if(!id||id.length<3){setCheckMsg("ID must be at least 3 characters");return;}
+    setChecking(true);setCheckMsg(null);
+    try{
+      const rows=await sbGet("shops",`owner_id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`);
+      if(rows.length>0){setCheckMsg("That ID is already taken — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;}
+      setOwnerIdConfirmed(id);setStep(2);
+    }catch(e){setCheckMsg("Could not check availability. Try again.");}
+    finally{setChecking(false);}
+  };
+  return <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:20}}>
+    <div style={{width:"100%",maxWidth:420}}>
+      <div style={{textAlign:"center",marginBottom:32}}>
+        <div style={{fontSize:40,marginBottom:12}}>📊</div>
+        <div style={{fontSize:26,fontWeight:900,color:T.text,letterSpacing:-0.5}}>Retail Intelligence</div>
+        <div style={{fontSize:15,color:T.muted,marginTop:6}}>Owner Dashboard Setup</div>
+      </div>
+      {step===1&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Create your Owner ID</div>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>This becomes your permanent dashboard link. Choose something unique — your name, business name, or a combination. You can't change it later.</div>
+        <input style={inp} value={ownerId} onChange={e=>setOwnerId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="e.g. smith_retail or joes_cafe" onKeyDown={e=>{if(e.key==="Enter")checkAvailability();}}/>
+        {ownerId&&<div style={{fontSize:12,color:T.blue,marginBottom:12,wordBreak:"break-all"}}>🔗 Your link will be: .../?owner={ownerId}</div>}
+        {checkMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>{checkMsg}</div>}
+        <button onClick={checkAvailability} disabled={checking||!ownerId.trim()} style={{width:"100%",background:checking||!ownerId.trim()?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}}>{checking?"Checking…":"Check Availability & Continue →"}</button>
+      </div>}
+      {step===2&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>✅ Your Owner ID is ready</div>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>Bookmark the link below — it's your permanent dashboard. Then use it to add your first business and get your staff link.</div>
+        <div style={{background:T.blueLight,borderRadius:12,padding:"16px",marginBottom:20,border:"1px solid #BFDBFE"}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:6}}>🔗 Your Owner Dashboard</div>
+          <div style={{fontSize:13,color:T.blue,wordBreak:"break-all",lineHeight:1.7,fontWeight:600}}>{ownerUrl}</div>
+          <button onClick={()=>navigator.clipboard?.writeText(ownerUrl)} style={{background:T.blue,color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",marginTop:10}}>Copy Link</button>
+        </div>
+        <div style={{background:T.amberLight,borderRadius:12,padding:"14px 16px",marginBottom:24,border:"1px solid #FDE68A"}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.amber}}>⚠️ Save this link now</div>
+          <div style={{fontSize:13,color:T.amber,marginTop:4,lineHeight:1.5}}>There's no login or password recovery. Your link IS your access. Bookmark it before continuing.</div>
+        </div>
+        <a href={ownerUrl} style={{display:"block",width:"100%",background:"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer",textAlign:"center",textDecoration:"none",boxSizing:"border-box"}}>Go to My Dashboard →</a>
+      </div>}
+    </div>
+  </div>;
+}
+
 export default function App(){
   const ownerId=getOwnerIdFromURL();
   const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
@@ -857,7 +919,10 @@ export default function App(){
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
-  const loadShops=async()=>{if(!ownerId){setError("No owner ID in URL. Add ?owner=your_id");return[];}try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
+  // No ?owner= param → show self-serve setup
+  if(!ownerId)return <NewOwnerSetup/>;
+
+  const loadShops=async()=>{try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
   useEffect(()=>{setLoading(true);loadShops().finally(()=>setLoading(false));},[]); // eslint-disable-line
   useEffect(()=>{if(!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId]);
