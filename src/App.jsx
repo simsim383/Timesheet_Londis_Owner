@@ -860,24 +860,48 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
 }
 
 function NewOwnerSetup(){
-  const [step,setStep]=useState(1);
+  const [step,setStep]=useState(1); // 1=invite code, 2=choose owner id, 3=done
+  const [inviteCode,setInviteCode]=useState("");
+  const [inviteMsg,setInviteMsg]=useState(null);
+  const [inviteChecking,setInviteChecking]=useState(false);
   const [ownerId,setOwnerId]=useState("");
   const [ownerIdConfirmed,setOwnerIdConfirmed]=useState("");
   const [checking,setChecking]=useState(false);
   const [checkMsg,setCheckMsg]=useState(null);
   const inp={width:"100%",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,fontSize:16,color:T.text,boxSizing:"border-box",outline:"none",marginBottom:8};
   const ownerUrl=`https://timesheet-owner-retail-intelligence.vercel.app/?owner=${ownerIdConfirmed}`;
+
+  const checkInviteCode=async()=>{
+    const code=inviteCode.trim().toUpperCase();
+    if(!code){setInviteMsg("Please enter your invite code");return;}
+    setInviteChecking(true);setInviteMsg(null);
+    try{
+      const rows=await sbGet("invite_codes",`code=eq.${encodeURIComponent(code)}&limit=1`);
+      if(!rows.length){setInviteMsg("That code isn't valid — check it and try again, or contact support.");return;}
+      if(rows[0].used){setInviteMsg("That code has already been used. Each code can only be used once. Contact support if you need a new one.");return;}
+      setStep(2);
+    }catch(e){setInviteMsg("Could not verify code. Try again.");}
+    finally{setInviteChecking(false);}
+  };
+
   const checkAvailability=async()=>{
     const id=ownerId.trim().toLowerCase().replace(/\s+/g,"_");
     if(!id||id.length<3){setCheckMsg("ID must be at least 3 characters");return;}
     setChecking(true);setCheckMsg(null);
     try{
-      const rows=await sbGet("shops",`owner_id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`);
-      if(rows.length>0){setCheckMsg("That ID is already taken — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;}
-      setOwnerIdConfirmed(id);setStep(2);
-    }catch(e){setCheckMsg("Could not check availability. Try again.");}
+      const [asOwner,asShopId]=await Promise.all([
+        sbGet("shops",`owner_id=eq.${encodeURIComponent(id)}&limit=1`),
+        sbGet("shops",`id=eq.${encodeURIComponent(id)}&limit=1`),
+      ]);
+      if(asOwner.length>0||asShopId.length>0){setCheckMsg("That ID is already in use — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;}
+      // Mark invite code as used
+      const code=inviteCode.trim().toUpperCase();
+      await sbPatch("invite_codes",`code=eq.${encodeURIComponent(code)}`,{used:true,used_by:id,used_at:new Date().toISOString()});
+      setOwnerIdConfirmed(id);setStep(3);
+    }catch(e){setCheckMsg("Could not complete setup. Try again.");}
     finally{setChecking(false);}
   };
+
   return <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:20}}>
     <div style={{width:"100%",maxWidth:420}}>
       <div style={{textAlign:"center",marginBottom:32}}>
@@ -885,25 +909,36 @@ function NewOwnerSetup(){
         <div style={{fontSize:26,fontWeight:900,color:T.text,letterSpacing:-0.5}}>Retail Intelligence</div>
         <div style={{fontSize:15,color:T.muted,marginTop:6}}>Owner Dashboard Setup</div>
       </div>
+
       {step===1&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
-        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Create your Owner ID</div>
-        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>This becomes your permanent dashboard link. Choose something unique — your name, business name, or a combination. You can't change it later.</div>
-        <input style={inp} value={ownerId} onChange={e=>setOwnerId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="e.g. smith_retail or joes_cafe" onKeyDown={e=>{if(e.key==="Enter")checkAvailability();}}/>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Enter your invite code</div>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>You should have received a unique invite code. Each code can only be used once to create one account.</div>
+        <input style={{...inp,textTransform:"uppercase",letterSpacing:2,fontWeight:700}} value={inviteCode} onChange={e=>setInviteCode(e.target.value.toUpperCase())} placeholder="e.g. HORDEN-2026" onKeyDown={e=>{if(e.key==="Enter")checkInviteCode();}}/>
+        {inviteMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12,lineHeight:1.5}}>{inviteMsg}</div>}
+        <button onClick={checkInviteCode} disabled={inviteChecking||!inviteCode.trim()} style={{width:"100%",background:inviteChecking||!inviteCode.trim()?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}}>{inviteChecking?"Checking…":"Continue →"}</button>
+      </div>}
+
+      {step===2&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><div style={{background:T.greenLight,color:T.green,borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700}}>✓ Code accepted</div></div>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Choose your Owner ID</div>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>This becomes your permanent dashboard link. Use your business name or your name — you can't change it later.</div>
+        <input style={inp} value={ownerId} onChange={e=>setOwnerId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="e.g. smiths_newsagent or bob_retail" onKeyDown={e=>{if(e.key==="Enter")checkAvailability();}}/>
         {ownerId&&<div style={{fontSize:12,color:T.blue,marginBottom:12,wordBreak:"break-all"}}>🔗 Your link will be: .../?owner={ownerId}</div>}
         {checkMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>{checkMsg}</div>}
-        <button onClick={checkAvailability} disabled={checking||!ownerId.trim()} style={{width:"100%",background:checking||!ownerId.trim()?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}}>{checking?"Checking…":"Check Availability & Continue →"}</button>
+        <button onClick={checkAvailability} disabled={checking||!ownerId.trim()} style={{width:"100%",background:checking||!ownerId.trim()?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}}>{checking?"Setting up…":"Create My Dashboard →"}</button>
       </div>}
-      {step===2&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
-        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>✅ Your Owner ID is ready</div>
-        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>Bookmark the link below — it's your permanent dashboard. Then use it to add your first business and get your staff link.</div>
-        <div style={{background:T.blueLight,borderRadius:12,padding:"16px",marginBottom:20,border:"1px solid #BFDBFE"}}>
+
+      {step===3&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>🎉 You're all set</div>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>Your dashboard is ready. Bookmark the link below — it's your permanent access. There's no password to remember, your link IS your login.</div>
+        <div style={{background:T.blueLight,borderRadius:12,padding:"16px",marginBottom:16,border:"1px solid #BFDBFE"}}>
           <div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:6}}>🔗 Your Owner Dashboard</div>
           <div style={{fontSize:13,color:T.blue,wordBreak:"break-all",lineHeight:1.7,fontWeight:600}}>{ownerUrl}</div>
           <button onClick={()=>navigator.clipboard?.writeText(ownerUrl)} style={{background:T.blue,color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",marginTop:10}}>Copy Link</button>
         </div>
         <div style={{background:T.amberLight,borderRadius:12,padding:"14px 16px",marginBottom:24,border:"1px solid #FDE68A"}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.amber}}>⚠️ Save this link now</div>
-          <div style={{fontSize:13,color:T.amber,marginTop:4,lineHeight:1.5}}>There's no login or password recovery. Your link IS your access. Bookmark it before continuing.</div>
+          <div style={{fontSize:13,fontWeight:700,color:T.amber}}>⚠️ Bookmark this now</div>
+          <div style={{fontSize:13,color:T.amber,marginTop:4,lineHeight:1.5}}>If you lose this link there is no recovery — your invite code has been used and cannot regenerate it. Save it to your home screen or bookmarks before continuing.</div>
         </div>
         <a href={ownerUrl} style={{display:"block",width:"100%",background:"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer",textAlign:"center",textDecoration:"none",boxSizing:"border-box"}}>Go to My Dashboard →</a>
       </div>}
@@ -936,11 +971,16 @@ export default function App(){
   useEffect(()=>{if(!pinUnlocked||!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId,pinUnlocked]);
 
   // ── PIN gate screen ───────────────────────────────────────────
+  // All shops for an owner share the same owner PIN — find the first one that has one set
+  const resolveOwnerPin=()=>{
+    if(!pinShops.length)return null; // no shops yet → let through
+    // Use the PIN from whichever shop has a non-default value, else "0000"
+    const withPin=pinShops.find(s=>s.ownerPin&&s.ownerPin!=="0000");
+    return(withPin||pinShops[0]).ownerPin||"0000";
+  };
   const tryPin=()=>{
-    // New owner with no shops yet: any 4-digit PIN they set is accepted (they'll set it when creating first business)
-    const correctPin=pinShops.length>0?(pinShops[0].ownerPin||"0000"):null;
+    const correctPin=resolveOwnerPin();
     if(correctPin===null){
-      // No businesses yet — just let them through, they'll set PIN when creating first business
       sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);
       fetchAllShops().then(all=>setAllShops(all));
       return;
@@ -965,7 +1005,7 @@ export default function App(){
       </div>
       {pinError&&<div style={{color:T.red,fontSize:13,fontWeight:700,marginBottom:12}}>Incorrect PIN — try again</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-        {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=><button key={i} onClick={()=>{if(k==="")return;if(k==="⌫"){setPinInput(p=>p.slice(0,-1));setPinError(false);}else if(pinInput.length<4){const np=pinInput+String(k);setPinInput(np);setPinError(false);if(np.length===4)setTimeout(()=>{const pi=np;const correctPin=pinShops.length>0?(pinShops[0].ownerPin||"0000"):null;if(correctPin===null){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);fetchAllShops().then(all=>setAllShops(all));}else if(pi===correctPin){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);setShops(pinShops);if(pinShops.length>0)setCurrentShopId(pinShops[0].shopId);fetchAllShops().then(all=>setAllShops(all));}else{setPinError(true);setPinInput("");}},120);}}} style={{height:58,borderRadius:14,border:`1px solid ${T.border}`,background:k===""?"transparent":T.bg,fontSize:k==="⌫"?20:22,fontWeight:700,color:T.text,cursor:k===""?"default":"pointer",transition:"background 0.1s"}}>{k}</button>)}
+        {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=><button key={i} onClick={()=>{if(k==="")return;if(k==="⌫"){setPinInput(p=>p.slice(0,-1));setPinError(false);}else if(pinInput.length<4){const np=pinInput+String(k);setPinInput(np);setPinError(false);if(np.length===4)setTimeout(()=>{const correctPin=resolveOwnerPin();if(correctPin===null){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);fetchAllShops().then(all=>setAllShops(all));}else if(np===correctPin){sessionStorage.setItem(SESSION_PIN_KEY,"1");setPinUnlocked(true);setShops(pinShops);if(pinShops.length>0)setCurrentShopId(pinShops[0].shopId);fetchAllShops().then(all=>setAllShops(all));}else{setPinError(true);setPinInput("");}},120);}}} style={{height:58,borderRadius:14,border:`1px solid ${T.border}`,background:k===""?"transparent":T.bg,fontSize:k==="⌫"?20:22,fontWeight:700,color:T.text,cursor:k===""?"default":"pointer",transition:"background 0.1s"}}>{k}</button>)}
       </div>
     </div>
   </div>;
