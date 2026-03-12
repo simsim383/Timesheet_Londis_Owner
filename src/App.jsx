@@ -889,8 +889,6 @@ function NewOwnerSetup(){
     if(!id||id.length<3){setCheckMsg("ID must be at least 3 characters");return;}
     setChecking(true);setCheckMsg(null);
     try{
-      // Check owner_ids table — this is written the moment an ID is claimed,
-      // even before the first business is created, so duplicates are impossible
       const [takenOwner,takenShop]=await Promise.all([
         sbGet("owner_ids",`id=eq.${encodeURIComponent(id)}&limit=1`),
         sbGet("shops",`id=eq.${encodeURIComponent(id)}&limit=1`),
@@ -898,13 +896,22 @@ function NewOwnerSetup(){
       if(takenOwner.length>0||takenShop.length>0){
         setCheckMsg("That ID is already taken — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;
       }
-      // Claim the ID immediately — write to owner_ids before anything else
+      // Claim the ID immediately — this is the single source of truth
+      // If this fails (e.g. race condition or duplicate) it will throw and we catch below
       await sbPost("owner_ids",{id,created_at:new Date().toISOString()});
       // Mark invite code as used
       const code=inviteCode.trim().toUpperCase();
       await sbPatch("invite_codes",`code=eq.${encodeURIComponent(code)}`,{used:true,used_by:id,used_at:new Date().toISOString()});
       setOwnerIdConfirmed(id);setStep(3);
-    }catch(e){setCheckMsg("Could not complete setup. Try again.");}
+    }catch(e){
+      // If the error mentions duplicate/unique violation, give a clear message
+      const msg=e.message||"";
+      if(msg.includes("duplicate")||msg.includes("unique")||msg.includes("already exists")||msg.includes("23505")){
+        setCheckMsg("That ID is already taken — try something more specific.");
+      }else{
+        setCheckMsg("Could not complete setup: "+msg+". Please try again.");
+      }
+    }
     finally{setChecking(false);}
   };
 
