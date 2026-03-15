@@ -1332,12 +1332,12 @@ export default function App(){
 
   const handleLogout=()=>{setOwnerId(null);setShops([]);setAllShops([]);setCurrentShopId(null);setMyRecs([]);setAllShifts([]);setBottomTab("home");setSubNav(null);};
 
-  if(!ownerId)return <AuthScreen onAuthenticated={(id)=>setOwnerId(id)}/>;
-
   const loadShops=async(id)=>{const owner=id||ownerId;try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(owner),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(ownerShops.length>0)setCurrentShopId(s=>s||ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
   useEffect(()=>{if(!ownerId)return;setLoading(true);loadShops(ownerId).finally(()=>setLoading(false));},[ownerId]); // eslint-disable-line
   useEffect(()=>{if(!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId]);
+
+  if(!ownerId)return <AuthScreen onAuthenticated={(id)=>setOwnerId(id)}/>;
 
   if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your business…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
   if(error)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:16}}><div style={{background:T.redLight,border:"1px solid #FECACA",borderRadius:14,padding:20,color:T.red,fontSize:14,maxWidth:400,textAlign:"center"}}>⚠️ {error}</div></div>;
