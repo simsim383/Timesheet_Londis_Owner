@@ -77,10 +77,11 @@ const SECTOR_DEFAULTS={
 const DEFAULT_SCHEDULE=SECTOR_DEFAULTS.convenience;
 
 // ── SESSION ──────────────────────────────────────────────────────
-const SESSION_KEY="ri_owner_session";
-function getSession(){try{const s=localStorage.getItem(SESSION_KEY);return s?JSON.parse(s):null;}catch{return null;}}
-function saveSession(ownerId){localStorage.setItem(SESSION_KEY,JSON.stringify({ownerId,ts:Date.now()}));}
-function clearSession(){localStorage.removeItem(SESSION_KEY);}
+// We store only the owner ID (never the PIN) so returning users are pre-filled
+const SAVED_ID_KEY="ri_saved_owner_id";
+function getSavedOwnerId(){try{return localStorage.getItem(SAVED_ID_KEY)||null;}catch{return null;}}
+function saveOwnerId(id){try{localStorage.setItem(SAVED_ID_KEY,id);}catch{}}
+function clearSavedOwnerId(){try{localStorage.removeItem(SAVED_ID_KEY);}catch{}}
 
 // ── OWNER AUTH helpers ────────────────────────────────────────────
 async function verifyOwnerPin(ownerId,pin){
@@ -1196,12 +1197,13 @@ function ManageTab({shops,ownerId,onShopsUpdated,onLogout}){
 
 // ── AUTH SCREEN (Login + New Setup) ──────────────────────────────
 function AuthScreen({onAuthenticated}){
-  const [mode,setMode]=useState("landing"); // landing | login | setup-code | setup-id
+  const savedId=getSavedOwnerId();
+  const [mode,setMode]=useState(savedId?"pin-only":"landing"); // landing | login | pin-only | setup-code | setup-id
   const [inviteCode,setInviteCode]=useState("");
   const [inviteMsg,setInviteMsg]=useState(null);
   const [inviteChecking,setInviteChecking]=useState(false);
   // login state
-  const [loginId,setLoginId]=useState("");
+  const [loginId,setLoginId]=useState(savedId||"");
   const [loginPin,setLoginPin]=useState("");
   const [loginMsg,setLoginMsg]=useState(null);
   const [loggingIn,setLoggingIn]=useState(false);
@@ -1248,6 +1250,7 @@ function AuthScreen({onAuthenticated}){
       // Mark invite code used
       const code=inviteCode.trim().toUpperCase();
       await sbPatch("invite_codes",`code=eq.${encodeURIComponent(code)}`,{used:true,used_by:id,used_at:new Date().toISOString()});
+      saveOwnerId(id);
       onAuthenticated(id);
     }catch(e){
       const msg=e.message||"";
@@ -1265,6 +1268,7 @@ function AuthScreen({onAuthenticated}){
     try{
       const result=await verifyOwnerPin(id,loginPin);
       if(!result.ok){setLoginMsg(result.msg);setLoggingIn(false);return;}
+      saveOwnerId(id);
       onAuthenticated(id);
     }catch(e){setLoginMsg("Login failed: "+(e.message||"check connection"));}
     finally{setLoggingIn(false);}
@@ -1281,6 +1285,18 @@ function AuthScreen({onAuthenticated}){
       {mode==="landing"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
         <button onClick={()=>setMode("login")} style={{width:"100%",padding:16,borderRadius:14,border:"none",background:"#111",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Log In</button>
         <button onClick={()=>setMode("setup-code")} style={{width:"100%",padding:16,borderRadius:14,border:`1.5px solid ${T.border}`,background:"#fff",color:T.sub,fontSize:15,fontWeight:600,cursor:"pointer"}}>I have an invite code</button>
+      </div>}
+
+      {mode==="pin-only"&&<div style={card}>
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <div style={{width:56,height:56,borderRadius:"50%",background:"#111",color:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:900,marginBottom:10}}>{(loginId||"?").slice(0,2).toUpperCase()}</div>
+          <div style={{fontSize:16,fontWeight:800,color:T.text}}>{loginId}</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:2}}>Enter your PIN to continue</div>
+        </div>
+        <input type="tel" inputMode="numeric" maxLength={4} style={{...pinInp,marginBottom:0}} value={loginPin} onChange={e=>{setLoginPin(e.target.value.replace(/\D/g,"").slice(0,4));setLoginMsg(null);}} onKeyDown={e=>{if(e.key==="Enter"&&loginPin.length===4)handleLogin();}} placeholder="••••" autoFocus/>
+        {loginMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,margin:"10px 0"}}>{loginMsg}</div>}
+        <button onClick={handleLogin} disabled={loggingIn||loginPin.length!==4} style={{...btn(loggingIn||loginPin.length!==4),marginTop:14}}>{loggingIn?"Logging in…":"Unlock →"}</button>
+        <button onClick={()=>{clearSavedOwnerId();setLoginId("");setLoginPin("");setLoginMsg(null);setMode("login");}} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",padding:"12px 0 0",display:"block",width:"100%",textAlign:"center"}}>Not {loginId}? Switch account</button>
       </div>}
 
       {mode==="login"&&<div style={card}>
@@ -1330,7 +1346,7 @@ export default function App(){
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
-  const handleLogout=()=>{setOwnerId(null);setShops([]);setAllShops([]);setCurrentShopId(null);setMyRecs([]);setAllShifts([]);setBottomTab("home");setSubNav(null);};
+  const handleLogout=()=>{clearSavedOwnerId();setOwnerId(null);setShops([]);setAllShops([]);setCurrentShopId(null);setMyRecs([]);setAllShifts([]);setBottomTab("home");setSubNav(null);};
 
   const loadShops=async(id)=>{const owner=id||ownerId;try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(owner),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(ownerShops.length>0)setCurrentShopId(s=>s||ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
