@@ -1248,7 +1248,6 @@ function AuthScreen({onAuthenticated}){
       // Mark invite code used
       const code=inviteCode.trim().toUpperCase();
       await sbPatch("invite_codes",`code=eq.${encodeURIComponent(code)}`,{used:true,used_by:id,used_at:new Date().toISOString()});
-      saveSession(id);
       onAuthenticated(id);
     }catch(e){
       const msg=e.message||"";
@@ -1266,7 +1265,6 @@ function AuthScreen({onAuthenticated}){
     try{
       const result=await verifyOwnerPin(id,loginPin);
       if(!result.ok){setLoginMsg(result.msg);setLoggingIn(false);return;}
-      saveSession(id);
       onAuthenticated(id);
     }catch(e){setLoginMsg("Login failed: "+(e.message||"check connection"));}
     finally{setLoggingIn(false);}
@@ -1325,20 +1323,20 @@ function AuthScreen({onAuthenticated}){
 
 
 export default function App(){
-  const [ownerId,setOwnerId]=useState(()=>{const s=getSession();return s?.ownerId||null;});
-  const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
+  const [ownerId,setOwnerId]=useState(null); // always start logged out
+  const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(false);const [error,setError]=useState(null);
   const [currentShopId,setCurrentShopId]=useState(null);const [myRecs,setMyRecs]=useState([]);const [allShifts,setAllShifts]=useState([]);const [dataLoading,setDataLoading]=useState(false);
   const [showSwitcher,setShowSwitcher]=useState(false);const [bottomTab,setBottomTab]=useState("home");const [subNav,setSubNav]=useState(null);
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
-  const handleLogout=()=>{clearSession();setOwnerId(null);setShops([]);setAllShops([]);setCurrentShopId(null);setMyRecs([]);setAllShifts([]);setBottomTab("home");};
+  const handleLogout=()=>{setOwnerId(null);setShops([]);setAllShops([]);setCurrentShopId(null);setMyRecs([]);setAllShifts([]);setBottomTab("home");setSubNav(null);};
 
-  if(!ownerId)return <AuthScreen onAuthenticated={(id)=>{setOwnerId(id);setLoading(true);}}/>;
+  if(!ownerId)return <AuthScreen onAuthenticated={(id)=>setOwnerId(id)}/>;
 
-  const loadShops=async()=>{try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
+  const loadShops=async(id)=>{const owner=id||ownerId;try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(owner),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(ownerShops.length>0)setCurrentShopId(s=>s||ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
-  useEffect(()=>{setLoading(true);loadShops().finally(()=>setLoading(false));},[]); // eslint-disable-line
+  useEffect(()=>{if(!ownerId)return;setLoading(true);loadShops(ownerId).finally(()=>setLoading(false));},[ownerId]); // eslint-disable-line
   useEffect(()=>{if(!currentShopId)return;setDataLoading(true);Promise.all([fetchShiftsForShop(currentShopId),fetchAllShifts()]).then(([s,a])=>{setMyRecs(s);setAllShifts(a);}).catch(e=>console.error(e)).finally(()=>setDataLoading(false));},[currentShopId]);
 
   if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:36,height:36,borderRadius:"50%",border:`3px solid ${T.div}`,borderTop:`3px solid ${T.accent}`,animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:T.muted,fontSize:15}}>Loading your business…</p></div><style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style></div>;
@@ -1352,13 +1350,13 @@ export default function App(){
   const subTitle=subNav?.type==="staffDetail"?subNav.staff:(subNav?.task?.length>22?subNav.task.slice(0,21)+"…":subNav?.task);
 
   const mainContent=()=>{
-    if(!currentShop||bottomTab==="manage")return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{const s=await loadShops();setShops(s);}} onLogout={handleLogout}/>;
+    if(!currentShop||bottomTab==="manage")return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{const s=await loadShops(ownerId);setShops(s);}} onLogout={handleLogout}/>;
     if(isSubPage)return subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onBack={()=>setSubNav(null)} onRemoveStaff={async()=>{await loadShops();setSubNav(null);}}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>;
     if(bottomTab==="home")return <HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>;
     if(bottomTab==="benchmarks")return <BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>;
-    if(bottomTab==="staff")return <StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops();}}/>;
+    if(bottomTab==="staff")return <StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops(ownerId);}}/>;
     if(bottomTab==="actions")return <ActionsTab shopConfig={currentShop} shopId={currentShopId}/>;
-    return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}} onLogout={handleLogout}/>;
+    return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops(ownerId);}} onLogout={handleLogout}/>;
   };
 
   return <div style={{background:T.bg,minHeight:"100vh",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",maxWidth:480,margin:"0 auto"}}>
