@@ -76,7 +76,23 @@ const SECTOR_DEFAULTS={
 };
 const DEFAULT_SCHEDULE=SECTOR_DEFAULTS.convenience;
 
-function getOwnerIdFromURL(){return new URLSearchParams(window.location.search).get("owner")||null;}
+// ── SESSION ──────────────────────────────────────────────────────
+const SESSION_KEY="ri_owner_session";
+function getSession(){try{const s=localStorage.getItem(SESSION_KEY);return s?JSON.parse(s):null;}catch{return null;}}
+function saveSession(ownerId){localStorage.setItem(SESSION_KEY,JSON.stringify({ownerId,ts:Date.now()}));}
+function clearSession(){localStorage.removeItem(SESSION_KEY);}
+
+// ── OWNER AUTH helpers ────────────────────────────────────────────
+async function verifyOwnerPin(ownerId,pin){
+  const rows=await sbGet("owner_ids",`id=eq.${encodeURIComponent(ownerId)}&limit=1`);
+  if(!rows.length)return{ok:false,msg:"Owner ID not found"};
+  if(!rows[0].pin)return{ok:false,msg:"No PIN set for this account — contact support"};
+  if(rows[0].pin!==pin)return{ok:false,msg:"Incorrect PIN"};
+  return{ok:true};
+}
+async function setOwnerPin(ownerId,pin){
+  await sbPatch("owner_ids",`id=eq.${encodeURIComponent(ownerId)}`,{pin});
+}
 function parseShop(row){return{id:row.id,shopId:row.id,shopName:row.name,sector:(row.sector||"convenience").toLowerCase(),shiftHours:parseInt(row.shift_hours||6),staff:Array.isArray(row.staff)?row.staff:(typeof row.staff==="string"?JSON.parse(row.staff):[]),staffNotes:row.staff_notes||{},ownerPin:row.owner_pin||"0000",ownerId:row.owner_id,taskCategories:row.task_categories||null};}
 function parseRec(row){return{id:row.id,staff:row.staff_name||"",date:row.date||"",task:row.task||"",category:row.category||"",mins:Number(row.mins||0),notes:row.notes||"",incident:row.incident||false,week:Number(row.week||0),year:Number(row.year||0),shopId:row.shop_id||""};}
 async function fetchOwnerShops(ownerId){const rows=await sbGet("shops",`owner_id=eq.${encodeURIComponent(ownerId)}&active=eq.true&order=name`);return rows.map(parseShop);}
@@ -1078,7 +1094,7 @@ function CategoryEditor({fCats,setFCats,sector,customTasks,onBack}){
   </div>;
 }
 
-function ManageTab({shops,ownerId,onShopsUpdated}){
+function ManageTab({shops,ownerId,onShopsUpdated,onLogout}){
   const [view,setView]=useState("list");const [editShop,setEditShop]=useState(null);const [saving,setSaving]=useState(false);const [saveMsg,setSaveMsg]=useState(null);
   const [confirmDelete,setConfirmDelete]=useState(null);const [deleting,setDeleting]=useState(false);
   const [fName,setFName]=useState("");const [fId,setFId]=useState("");const [fSector,setFSector]=useState("convenience");const [fHours,setFHours]=useState("6");const [fPin,setFPin]=useState("0000");const [fStaff,setFStaff]=useState([]);
@@ -1112,7 +1128,7 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
     <div style={{fontSize:14,color:T.muted,marginBottom:20}}>Edit settings and staff for each of your businesses.</div>
     {shops.map((shop,i)=>{const staffUrl=`https://timesheet-staff-retail-intelligence.vercel.app/?shop=${shop.shopId}`;return <Card key={shop.shopId} style={{marginBottom:10}}><div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>openEdit(shop)}><div style={{width:44,height:44,borderRadius:12,background:SC[i%SC.length],display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{SECTOR_ICONS[shop.sector]||"🏢"}</div><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800,color:T.text}}>{shop.shopName}</div><div style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{shop.sector} · {shop.staff.length} staff</div></div><span style={{fontSize:20,color:T.muted,flexShrink:0}}>›</span></div><div onClick={e=>e.stopPropagation()} style={{marginTop:10,background:T.blueLight,borderRadius:10,padding:"10px 12px",display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:T.blue,flex:1,wordBreak:"break-all",lineHeight:1.5,userSelect:"text"}}>📲 {staffUrl}</span><button onClick={e=>{e.stopPropagation();navigator.clipboard.writeText(staffUrl).catch(()=>{});}} style={{background:T.blue,color:"#fff",border:"none",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>Copy</button></div><button onClick={()=>openTaskManager(shop)} style={{marginTop:8,width:"100%",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:700,color:T.sub,cursor:"pointer",textAlign:"left"}}>📋 Manage saved tasks for {shop.shopName}</button></Card>;})}
     {!shops.length&&<p style={{color:T.muted,fontSize:14,textAlign:"center",padding:"32px 0"}}>No businesses yet. Tap + Add Business.</p>}
-    <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔗 Your Owner Dashboard Link</div><div style={{fontSize:13,color:T.blue,lineHeight:1.6,wordBreak:"break-all"}}>https://timesheet-owner-retail-intelligence.vercel.app/?owner={ownerId}</div><div style={{fontSize:12,color:T.blue,marginTop:6,opacity:0.7}}>Bookmark this. Each owner gets their own unique link.</div></div>
+    <div style={{marginTop:20,background:T.blueLight,borderRadius:12,padding:"14px 16px",border:"1px solid #BFDBFE"}}><div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:4}}>🔑 Signed in as <strong>{ownerId}</strong></div><div style={{fontSize:12,color:T.blue,opacity:0.8,marginBottom:10}}>Log in at any time from any device using your Owner ID and PIN.</div><button onClick={onLogout} style={{background:T.redLight,color:T.red,border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Sign Out</button></div>
   </div>
   :<div style={{padding:"16px 16px 90px"}}>
     {editingCats && <CategoryEditor fCats={fCats} setFCats={setFCats} sector={fSector} customTasks={editCatCustomTasks} onBack={()=>setEditingCats(false)}/>}
@@ -1178,60 +1194,82 @@ function ManageTab({shops,ownerId,onShopsUpdated}){
   </div>;
 }
 
-function NewOwnerSetup(){
-  const [step,setStep]=useState(1); // 1=invite code, 2=choose owner id, 3=done
+// ── AUTH SCREEN (Login + New Setup) ──────────────────────────────
+function AuthScreen({onAuthenticated}){
+  const [mode,setMode]=useState("landing"); // landing | login | setup-code | setup-id
   const [inviteCode,setInviteCode]=useState("");
   const [inviteMsg,setInviteMsg]=useState(null);
   const [inviteChecking,setInviteChecking]=useState(false);
+  // login state
+  const [loginId,setLoginId]=useState("");
+  const [loginPin,setLoginPin]=useState("");
+  const [loginMsg,setLoginMsg]=useState(null);
+  const [loggingIn,setLoggingIn]=useState(false);
+  // setup state
   const [ownerId,setOwnerId]=useState("");
-  const [ownerIdConfirmed,setOwnerIdConfirmed]=useState("");
-  const [checking,setChecking]=useState(false);
-  const [checkMsg,setCheckMsg]=useState(null);
-  const inp={width:"100%",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,fontSize:16,color:T.text,boxSizing:"border-box",outline:"none",marginBottom:8};
-  const ownerUrl=`https://timesheet-owner-retail-intelligence.vercel.app/?owner=${ownerIdConfirmed}`;
+  const [newPin,setNewPin]=useState("");
+  const [newPinConfirm,setNewPinConfirm]=useState("");
+  const [setupMsg,setSetupMsg]=useState(null);
+  const [setupLoading,setSetupLoading]=useState(false);
 
-  const checkInviteCode=async()=>{
+  const inp={width:"100%",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,fontSize:16,color:T.text,boxSizing:"border-box",outline:"none",marginBottom:8,fontFamily:"inherit"};
+  const pinInp={...inp,letterSpacing:8,textAlign:"center",fontSize:22,fontWeight:800};
+  const card={background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"};
+  const btn=(disabled)=>({width:"100%",background:disabled?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:disabled?"default":"pointer"});
+
+  const handleInviteCode=async()=>{
     const code=inviteCode.trim().toUpperCase();
     if(!code){setInviteMsg("Please enter your invite code");return;}
     setInviteChecking(true);setInviteMsg(null);
     try{
       const rows=await sbGet("invite_codes",`code=eq.${encodeURIComponent(code)}&limit=1`);
-      if(!rows.length){setInviteMsg("That code isn't valid — check it and try again, or contact support.");return;}
-      if(rows[0].used){setInviteMsg("That code has already been used. Each code can only be used once. Contact support if you need a new one.");return;}
-      setStep(2);
-    }catch(e){setInviteMsg("Could not verify code. Try again.");}
+      if(!rows.length){setInviteMsg("That code isn't valid — check it and try again.");return;}
+      if(rows[0].used){setInviteMsg("That code has already been used. Contact support for a new one.");return;}
+      setMode("setup-id");
+    }catch(e){setInviteMsg("Could not verify code. Check connection.");}
     finally{setInviteChecking(false);}
   };
 
-  const checkAvailability=async()=>{
+  const handleSetup=async()=>{
     const id=ownerId.trim().toLowerCase().replace(/\s+/g,"_");
-    if(!id||id.length<3){setCheckMsg("ID must be at least 3 characters");return;}
-    setChecking(true);setCheckMsg(null);
+    if(!id||id.length<3){setSetupMsg("ID must be at least 3 characters");return;}
+    if(!/^[a-z0-9_]+$/.test(id)){setSetupMsg("Use only letters, numbers and underscores");return;}
+    if(newPin.length!==4||!/^\d{4}$/.test(newPin)){setSetupMsg("PIN must be exactly 4 digits");return;}
+    if(newPin!==newPinConfirm){setSetupMsg("PINs don't match");return;}
+    setSetupLoading(true);setSetupMsg(null);
     try{
-      const [takenOwner,takenShop]=await Promise.all([
+      const[takenOwner,takenShop]=await Promise.all([
         sbGet("owner_ids",`id=eq.${encodeURIComponent(id)}&limit=1`),
         sbGet("shops",`id=eq.${encodeURIComponent(id)}&limit=1`),
       ]);
-      if(takenOwner.length>0||takenShop.length>0){
-        setCheckMsg("That ID is already taken — try something more specific, e.g. 'smith_retail' or 'joes_cafe_london'");return;
-      }
-      // Claim the ID immediately — this is the single source of truth
-      // If this fails (e.g. race condition or duplicate) it will throw and we catch below
-      await sbPost("owner_ids",{id,created_at:new Date().toISOString()});
-      // Mark invite code as used
+      if(takenOwner.length||takenShop.length){setSetupMsg("That ID is already taken — try something more specific");setSetupLoading(false);return;}
+      // Claim ID with PIN
+      await sbPost("owner_ids",{id,pin:newPin,created_at:new Date().toISOString()});
+      // Mark invite code used
       const code=inviteCode.trim().toUpperCase();
       await sbPatch("invite_codes",`code=eq.${encodeURIComponent(code)}`,{used:true,used_by:id,used_at:new Date().toISOString()});
-      setOwnerIdConfirmed(id);setStep(3);
+      saveSession(id);
+      onAuthenticated(id);
     }catch(e){
-      // If the error mentions duplicate/unique violation, give a clear message
       const msg=e.message||"";
-      if(msg.includes("duplicate")||msg.includes("unique")||msg.includes("already exists")||msg.includes("23505")){
-        setCheckMsg("That ID is already taken — try something more specific.");
-      }else{
-        setCheckMsg("Could not complete setup: "+msg+". Please try again.");
-      }
+      if(msg.includes("duplicate")||msg.includes("unique")||msg.includes("23505")){setSetupMsg("That ID is already taken — try something more specific.");}
+      else{setSetupMsg("Setup failed: "+msg);}
     }
-    finally{setChecking(false);}
+    finally{setSetupLoading(false);}
+  };
+
+  const handleLogin=async()=>{
+    const id=loginId.trim().toLowerCase();
+    if(!id){setLoginMsg("Enter your owner ID");return;}
+    if(loginPin.length!==4){setLoginMsg("Enter your 4-digit PIN");return;}
+    setLoggingIn(true);setLoginMsg(null);
+    try{
+      const result=await verifyOwnerPin(id,loginPin);
+      if(!result.ok){setLoginMsg(result.msg);setLoggingIn(false);return;}
+      saveSession(id);
+      onAuthenticated(id);
+    }catch(e){setLoginMsg("Login failed: "+(e.message||"check connection"));}
+    finally{setLoggingIn(false);}
   };
 
   return <div style={{minHeight:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:20}}>
@@ -1239,54 +1277,64 @@ function NewOwnerSetup(){
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:40,marginBottom:12}}>📊</div>
         <div style={{fontSize:26,fontWeight:900,color:T.text,letterSpacing:-0.5}}>Retail Intelligence</div>
-        <div style={{fontSize:15,color:T.muted,marginTop:6}}>Owner Dashboard Setup</div>
+        <div style={{fontSize:15,color:T.muted,marginTop:6}}>Owner Dashboard</div>
       </div>
 
-      {step===1&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
+      {mode==="landing"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <button onClick={()=>setMode("login")} style={{width:"100%",padding:16,borderRadius:14,border:"none",background:"#111",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Log In</button>
+        <button onClick={()=>setMode("setup-code")} style={{width:"100%",padding:16,borderRadius:14,border:`1.5px solid ${T.border}`,background:"#fff",color:T.sub,fontSize:15,fontWeight:600,cursor:"pointer"}}>I have an invite code</button>
+      </div>}
+
+      {mode==="login"&&<div style={card}>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:20}}>Welcome back</div>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:6}}>OWNER ID</div>
+        <input style={inp} value={loginId} onChange={e=>{setLoginId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""));setLoginMsg(null);}} placeholder="e.g. smiths_newsagent" autoFocus onKeyDown={e=>{if(e.key==="Enter"&&loginPin.length===4)handleLogin();}}/>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:6}}>PIN</div>
+        <input type="tel" inputMode="numeric" maxLength={4} style={pinInp} value={loginPin} onChange={e=>{setLoginPin(e.target.value.replace(/\D/g,"").slice(0,4));setLoginMsg(null);}} onKeyDown={e=>{if(e.key==="Enter"&&loginPin.length===4)handleLogin();}} placeholder="••••"/>
+        {loginMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>{loginMsg}</div>}
+        <button onClick={handleLogin} disabled={loggingIn||!loginId.trim()||loginPin.length!==4} style={btn(loggingIn||!loginId.trim()||loginPin.length!==4)}>{loggingIn?"Logging in…":"Log In →"}</button>
+        <button onClick={()=>{setMode("landing");setLoginMsg(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",padding:"12px 0 0",display:"block"}}>← Back</button>
+      </div>}
+
+      {mode==="setup-code"&&<div style={card}>
         <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Enter your invite code</div>
-        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>You should have received a unique invite code. Each code can only be used once to create one account.</div>
-        <input style={{...inp,textTransform:"uppercase",letterSpacing:2,fontWeight:700}} value={inviteCode} onChange={e=>setInviteCode(e.target.value.toUpperCase())} placeholder="e.g. HORDEN-2026" onKeyDown={e=>{if(e.key==="Enter")checkInviteCode();}}/>
-        {inviteMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12,lineHeight:1.5}}>{inviteMsg}</div>}
-        <button onClick={checkInviteCode} disabled={inviteChecking||!inviteCode.trim()} style={{width:"100%",background:inviteChecking||!inviteCode.trim()?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}}>{inviteChecking?"Checking…":"Continue →"}</button>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>Each code can only be used once to create one account.</div>
+        <input style={{...inp,textTransform:"uppercase",letterSpacing:2,fontWeight:700}} value={inviteCode} onChange={e=>{setInviteCode(e.target.value.toUpperCase());setInviteMsg(null);}} placeholder="e.g. HORDEN-2026" autoFocus onKeyDown={e=>{if(e.key==="Enter")handleInviteCode();}}/>
+        {inviteMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>{inviteMsg}</div>}
+        <button onClick={handleInviteCode} disabled={inviteChecking||!inviteCode.trim()} style={btn(inviteChecking||!inviteCode.trim())}>{inviteChecking?"Checking…":"Continue →"}</button>
+        <button onClick={()=>{setMode("landing");setInviteMsg(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",padding:"12px 0 0",display:"block"}}>← Back</button>
       </div>}
 
-      {step===2&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><div style={{background:T.greenLight,color:T.green,borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700}}>✓ Code accepted</div></div>
-        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Choose your Owner ID</div>
-        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>This becomes your permanent dashboard link. Use your business name or your name — you can't change it later.</div>
-        <input style={inp} value={ownerId} onChange={e=>setOwnerId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""))} placeholder="e.g. smiths_newsagent or bob_retail" onKeyDown={e=>{if(e.key==="Enter")checkAvailability();}}/>
-        {ownerId&&<div style={{fontSize:12,color:T.blue,marginBottom:12,wordBreak:"break-all"}}>🔗 Your link will be: .../?owner={ownerId}</div>}
-        {checkMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>{checkMsg}</div>}
-        <button onClick={checkAvailability} disabled={checking||!ownerId.trim()} style={{width:"100%",background:checking||!ownerId.trim()?"#9ca3af":"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer"}}>{checking?"Setting up…":"Create My Dashboard →"}</button>
-      </div>}
-
-      {step===3&&<div style={{background:"#fff",borderRadius:20,padding:"28px 24px",boxShadow:"0 4px 24px rgba(0,0,0,0.07)"}}>
-        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>🎉 You're all set</div>
-        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>Your dashboard is ready. Bookmark the link below — it's your permanent access. There's no password to remember, your link IS your login.</div>
-        <div style={{background:T.blueLight,borderRadius:12,padding:"16px",marginBottom:16,border:"1px solid #BFDBFE"}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.blue,marginBottom:6}}>🔗 Your Owner Dashboard</div>
-          <div style={{fontSize:13,color:T.blue,wordBreak:"break-all",lineHeight:1.7,fontWeight:600}}>{ownerUrl}</div>
-          <button onClick={()=>navigator.clipboard?.writeText(ownerUrl)} style={{background:T.blue,color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",marginTop:10}}>Copy Link</button>
-        </div>
-        <div style={{background:T.amberLight,borderRadius:12,padding:"14px 16px",marginBottom:24,border:"1px solid #FDE68A"}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.amber}}>⚠️ Bookmark this now</div>
-          <div style={{fontSize:13,color:T.amber,marginTop:4,lineHeight:1.5}}>If you lose this link there is no recovery — your invite code has been used and cannot regenerate it. Save it to your home screen or bookmarks before continuing.</div>
-        </div>
-        <a href={ownerUrl} style={{display:"block",width:"100%",background:"#111",color:"#fff",border:"none",borderRadius:12,padding:"16px",fontSize:15,fontWeight:700,cursor:"pointer",textAlign:"center",textDecoration:"none",boxSizing:"border-box"}}>Go to My Dashboard →</a>
+      {mode==="setup-id"&&<div style={card}>
+        <div style={{display:"inline-block",background:T.greenLight,color:T.green,borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,marginBottom:16}}>✓ Code accepted</div>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:6}}>Create your account</div>
+        <div style={{fontSize:14,color:T.sub,marginBottom:20,lineHeight:1.6}}>Choose an Owner ID and a 4-digit PIN. You'll use these to log in on any device.</div>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:6}}>OWNER ID</div>
+        <input style={inp} value={ownerId} onChange={e=>{setOwnerId(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,""));setSetupMsg(null);}} placeholder="e.g. smiths_newsagent" autoFocus/>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:6}}>4-DIGIT PIN</div>
+        <input type="tel" inputMode="numeric" maxLength={4} style={pinInp} value={newPin} onChange={e=>{setNewPin(e.target.value.replace(/\D/g,"").slice(0,4));setSetupMsg(null);}} placeholder="••••"/>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,marginBottom:6}}>CONFIRM PIN</div>
+        <input type="tel" inputMode="numeric" maxLength={4} style={pinInp} value={newPinConfirm} onChange={e=>{setNewPinConfirm(e.target.value.replace(/\D/g,"").slice(0,4));setSetupMsg(null);}} onKeyDown={e=>{if(e.key==="Enter")handleSetup();}} placeholder="••••"/>
+        {setupMsg&&<div style={{background:T.redLight,color:T.red,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>{setupMsg}</div>}
+        <button onClick={handleSetup} disabled={setupLoading||!ownerId.trim()||newPin.length!==4||newPinConfirm.length!==4} style={btn(setupLoading||!ownerId.trim()||newPin.length!==4||newPinConfirm.length!==4)}>{setupLoading?"Creating account…":"Create Account →"}</button>
+        <div style={{fontSize:11,color:T.muted,marginTop:12,lineHeight:1.5}}>Remember your Owner ID and PIN — you'll need both to log in from any device.</div>
       </div>}
     </div>
   </div>;
 }
 
+
 export default function App(){
-  const ownerId=getOwnerIdFromURL();
+  const [ownerId,setOwnerId]=useState(()=>{const s=getSession();return s?.ownerId||null;});
   const [shops,setShops]=useState([]);const [allShops,setAllShops]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState(null);
   const [currentShopId,setCurrentShopId]=useState(null);const [myRecs,setMyRecs]=useState([]);const [allShifts,setAllShifts]=useState([]);const [dataLoading,setDataLoading]=useState(false);
   const [showSwitcher,setShowSwitcher]=useState(false);const [bottomTab,setBottomTab]=useState("home");const [subNav,setSubNav]=useState(null);
   const expDays=useMemo(()=>expDaysArr(30),[]);
   const now=new Date();const greeting=now.getHours()<12?"Good morning":now.getHours()<17?"Good afternoon":"Good evening";
 
-  if(!ownerId)return <NewOwnerSetup/>;
+  const handleLogout=()=>{clearSession();setOwnerId(null);setShops([]);setAllShops([]);setCurrentShopId(null);setMyRecs([]);setAllShifts([]);setBottomTab("home");};
+
+  if(!ownerId)return <AuthScreen onAuthenticated={(id)=>{setOwnerId(id);setLoading(true);}}/>;
 
   const loadShops=async()=>{try{const [ownerShops,all]=await Promise.all([fetchOwnerShops(ownerId),fetchAllShops()]);setShops(ownerShops);setAllShops(all);if(!currentShopId&&ownerShops.length>0)setCurrentShopId(ownerShops[0].shopId);return ownerShops;}catch(e){setError(e.message);return[];}};
 
@@ -1304,13 +1352,13 @@ export default function App(){
   const subTitle=subNav?.type==="staffDetail"?subNav.staff:(subNav?.task?.length>22?subNav.task.slice(0,21)+"…":subNav?.task);
 
   const mainContent=()=>{
-    if(!currentShop||bottomTab==="manage")return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{const s=await loadShops();setShops(s);}}/>;
+    if(!currentShop||bottomTab==="manage")return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{const s=await loadShops();setShops(s);}} onLogout={handleLogout}/>;
     if(isSubPage)return subNav.type==="staffDetail"?<StaffDetail name={subNav.staff} allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onBack={()=>setSubNav(null)} onRemoveStaff={async()=>{await loadShops();setSubNav(null);}}/>:<TaskDetail task={subNav.task} staffName={subNav.staff} allRecs={myRecs} shopConfig={currentShop}/>;
     if(bottomTab==="home")return <HomeTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds} expDays={expDays} dataLoading={dataLoading}/>;
     if(bottomTab==="benchmarks")return <BenchmarksTab allRecs={myRecs} allShifts={allShifts} allShops={shops} shopConfig={currentShop} currentShopId={currentShopId} ownedShopIds={ownedShopIds}/>;
     if(bottomTab==="staff")return <StaffTab allRecs={myRecs} expDays={expDays} onNav={onNav} shopConfig={currentShop} onShopConfigUpdated={async()=>{await loadShops();}}/>;
     if(bottomTab==="actions")return <ActionsTab shopConfig={currentShop} shopId={currentShopId}/>;
-    return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}}/>;
+    return <ManageTab shops={shops} ownerId={ownerId} onShopsUpdated={async()=>{await loadShops();}} onLogout={handleLogout}/>;
   };
 
   return <div style={{background:T.bg,minHeight:"100vh",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",maxWidth:480,margin:"0 auto"}}>
