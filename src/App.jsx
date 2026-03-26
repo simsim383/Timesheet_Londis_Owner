@@ -1284,8 +1284,7 @@ function AuthScreen({onAuthenticated}){
 
       {mode==="landing"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
         <button onClick={()=>setMode("login")} style={{width:"100%",padding:16,borderRadius:14,border:"none",background:"#111",color:"#fff",fontSize:16,fontWeight:700,cursor:"pointer"}}>Log In</button>
-        <button onClick={()=>setMode("setup-code")} style={{width:"100%",padding:16,borderRadius:14,border:`1.5px solid ${T.border}`,background:"#fff",color:T.sub,fontSize:15,fontWeight:600,cursor:"pointer"}}>I have an invite code</button>
-      </div>}
+        <button onClick={()=>setMode("setup-code")} style={{width:"100%",padding:16,borderRadius:14,border:`1.5px solid ${T.border}`,background:"#fff",color:T.sub,fontSize:15,fontWeight:600,cursor:"pointer"}}>Create an account</button>      </div>}
 
       {mode==="pin-only"&&<div style={card}>
         <div style={{textAlign:"center",marginBottom:20}}>
